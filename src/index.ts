@@ -1,16 +1,7 @@
 const express = require("express")
 const app = express()
-const { createServer } = require("node:http");
-const { join } = require("node:path"); //?
-const { Server } = require("socket.io");
-const server = createServer(app);
-const io = new Server(server, {
-	maxHttpBufferSize: 1e10,
-	cors: {
-		origin: "http://localhost:5173",
-		credentials: true,
-	}
-})
+
+// TODO: uninstall all unused packages
 const { MongoClient, ObjectId } = require("mongodb");
 const fs = require("fs");
 const path = require("node:path")
@@ -47,14 +38,15 @@ async function getImageName(uri) {
 	return name;
 }
 
-async function storeFileDetails(data) {
+// Is it possible to create a partition to store possibly incomplete uploads for faster access in mongodb?
+async function storeFileDetails(data, userId: string) {
 	let newDbRecords;
 	const client = new MongoClient(dbUri);
 	try {
 		const database = client.db('fylo')
 		const fileDetails = await database.collection("uploaded_files")
 
-		newDbRecords = data.map(fileData => {return {name: fileData.name, uri: generateUrlSlug(), type: fileData.type}})
+		newDbRecords = data.map(fileData => {return {name: fileData.name, uri: generateUrlSlug(), type: fileData.type, userId: new ObjectId(userId)}})
 
 		await fileDetails.insertMany(newDbRecords)
 	} catch(error) {
@@ -123,7 +115,7 @@ async function loginUser(userData) {
 
 function setCorsHeader(req, res, next) {
 	res.set("Access-Control-Allow-Origin", "http://localhost:5178")
-	res.set("Access-Control-Allow-Headers", "Content-Type")
+	res.set("Access-Control-Allow-Headers", "Content-Type, X-local-name")
 	res.set("Access-Control-Max-Age", "86400");	// 24 hours, should change later
 	res.set("Access-Control-Allow-Credentials", "true");
 	res.set("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
@@ -150,9 +142,7 @@ function writeToDisk(data) {
 }
 
 async function userIdIsValid(id: string|undefined) {
-	console.log("wtf?? 0")
 	if (!id) {
-		console.log("wtf??")
 		return false
 	}
 	const client = new MongoClient(dbUri);
@@ -168,25 +158,45 @@ async function userIdIsValid(id: string|undefined) {
 		return false
 		await client.close()
 	}
-	console.log("wtf?? 2")
 	return true
 }
 
-io.on("connection", (socket) => {
-	console.log("A user connected")
-	socket.on("file-upload", async (data) => {
-		writeToDisk(data);
-		const insertedData = await storeFileDetails(data)
-		io.emit("upload-success", insertedData)
-	})
-	socket.on("disconnect", ()=>{
-		console.log("A user disconnected");
-	})
+function writeToFile(filename: string, data) {
+	const fd = fs.openSync(filename, 'a')
+	fs.writeSync(fd, data)
+	fs.closeSync(fd)
+}
+
+app.post("/upload-files",  async (req, res) => {
+	if (!await userIdIsValid(req.cookies.userId)) {
+		res.status(401).json({errorMsg: "Unauthorised! Pls login"})
+	}else {
+		const data = {name: req.headers["x-local-name"], type: req.headers["content-type"]} // todo: check if mime type is present and stop saving files as their local name
+		const uploadedData = await storeFileDetails([data], req.cookies.userId)
+		req.on('data', (chunk)=>{
+			writeToFile("./uploads/"+req.headers["x-local-name"], chunk)
+		})
+		req.on('end', ()=>{
+			if (!req.complete) {
+				// mark as incomplete in db or something like that
+			}else {
+				console.log(uploadedData[0])
+				res.status(200).send(JSON.stringify(uploadedData[0]))
+			}
+		})
+	}
+})
+
+app.post("/upload-history", async (req, res) => {
+	if (!await userIdIsValid(req.cookies.userId)) {
+		res.status(401).json({errorMsg: "Unauthorised! Pls login"})
+	}else  {
+		const historyData = await getFilesData(req.cookies.userId);
+	}
 })
 
 app.get("/files-data", async (req, res) => {
-	console.log(req.cookies.userId, 'important');
-	if (!await userIdIsValid(req.cookies.userId)) {
+	if (!await userIdIsValid(req.cookies.userId)) { // perhaps this should even be a middleware
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
 	}else{
 		const responseData = await getFilesData(req.cookies.userId)
@@ -203,7 +213,6 @@ app.get("/images/:fileUrl", async (req, res)=>{
 	if (!fs.existsSync(path.join(__dirname, 'uploads', imgName))) { // look into making it static later
 		res.status(404).send("Image not found")
 	}
-	console.log(imgName);
 	res.status(200).sendFile(imgName, {root: path.join(__dirname, 'uploads')}, function(err) {
 		if (err) {
 			console.log(err)
@@ -231,22 +240,10 @@ app.post("/login", async (req, res) => {
 	const user = await loginUser(req.body);
 	if (user) {
 		// TODO: change and encrypt credentials
-		console.log(user._id);
 		res.cookie('userId', user._id, {httpOnly: true, secure: true, sameSite: "Strict", maxAge: 6.04e8}) // 7 days
 		return res.status(200).json({msg: "success", loggedInUserName: user.email})
 	}else return res.status(404).json({msg: "User not found!"});
 })
+
 console.log(`listening on port: ${portNo}`)
-server.listen(portNo);
-
-
-
-/*const multer = require("multer");
-
-const storage =  multer.diskStorage({
-	destination: function (req, file, cb) {
-		cb(null, "./uploads")
-	},
-	filename: (req, file, cb) => cb(null, file.originalname)
-})
-const uploads = multer({storage: storage});*/
+app.listen(portNo);
