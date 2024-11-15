@@ -95,7 +95,7 @@ async function getFilesData(userId) {
 }
 
 
-async function getFileByHash(userId: string, hash: string, uploadedName) {
+async function getFileByHash(userId: string, hash: string, uploadedName: string) {
 	let fileData = null;
 	const client = new MongoClient(dbUri);
 	try {
@@ -107,7 +107,7 @@ async function getFileByHash(userId: string, hash: string, uploadedName) {
 	}finally {
 		await client.close();
 	}
-	return {fileData};
+	return fileData;
 }
 
 async function createNewUser(userData) {
@@ -269,11 +269,11 @@ app.post("/upload-files",  async (req, res) => {
 		}
 		if (req.headers["x-resume-upload"] === "true") {
 			uploadedData = await getFileByHash(req.cookies.userId, req.headers["x-file-hash"], req.headers["x-local-name"])
-			if (!uploadedData.fileData) {
+			if (!uploadedData) {
 				res.status(400).json({msg: "File to be updated doesn't exist!"})
 				return 
 			}
-			uploadTracker.sizeUploaded = uploadedData.fileData.sizeUploaded
+			uploadTracker.sizeUploaded = uploadedData.sizeUploaded
 		}else {
 			metaData = generateMetaData(req)
 			uploadedData = await storeFileDetails(metaData);
@@ -311,14 +311,11 @@ app.post("/upload-files",  async (req, res) => {
 
 
 app.get("/fileDetail/:fileHash", async (req, res) => {
-	console.log("here na")
 	if (!await userIdIsValid(req.cookies.userId)) { // perhaps this should even be a middleware
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
 	}else {
-		console.log(req.headers)
 		const responseData = await getFileByHash(decrypt(req.cookies.userId), decodeURIComponent(req.params.fileHash), req.headers["x-local-name"])
-		console.log(responseData)
-		if (!responseData.fileData){
+		if (!responseData){
 			res.status(400).json({msg: "BAD REQUEST!"})
 			return 
 		}
