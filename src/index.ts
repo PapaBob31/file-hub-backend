@@ -20,41 +20,61 @@ function generateUrlSlug() {
   return urlSlug
 }
 
-async function getImageName(uri) {
-	let name = "";
+async function getImageNames(uri) {
+	let names = {pathName: "", uploadedName: ""};
 	const client = new MongoClient(dbUri);
 	try {
 		const dataBase = client.db("fylo");
 		const fileDetails = await dataBase.collection("uploaded_files");
 
 		const data = await fileDetails.findOne({uri});
-		if (data && data.type.startsWith("image/"))
-			name = data.name;
+		if (data && data.type.startsWith("image/")){
+			names.uploadedName = data.uploadedName;
+			names.pathName = data.pathName;
+		}else names = null;
 	}catch(error) {
+		names = null
 		console.log(error);
 	}finally {
 		await client.close();
 	}
-	return name;
+	return names;
 }
 
-// Is it possible to create a partition to store possibly incomplete uploads for faster access in mongodb?
-async function storeFileDetails(data, userId: string) {
-	let newDbRecords;
+function getCurrTime() {
+	return "Not implemented yet"
+}
+
+
+async function storeFileDetails(newFileDoc) {
 	const client = new MongoClient(dbUri);
 	try {
 		const database = client.db('fylo')
 		const fileDetails = await database.collection("uploaded_files")
-
-		newDbRecords = data.map(fileData => {return {name: fileData.name, uri: generateUrlSlug(), type: fileData.type, userId: new ObjectId(userId)}})
-
-		await fileDetails.insertMany(newDbRecords)
+		const results = await fileDetails.insertOne(newFileDoc)
+		newFileDoc._id = results.insertedId;
 	} catch(error) {
 		console.log(error)
 	}finally {
 		await client.close();
 	}
-	return newDbRecords
+	return newFileDoc
+}
+
+async function addUploadedFileSize(fileId, sizeUploaded: number) {
+	const client = new MongoClient(dbUri);
+	let result;
+	try {
+		const database = client.db('fylo')
+		const fileDetails = await database.collection("uploaded_files")
+
+		result = await fileDetails.updateOne({_id: fileId}, {$set: {sizeUploaded}})
+	} catch(error) {
+		console.log(error)
+	}finally {
+		await client.close();
+	}
+	return result;
 }
 
 async function getFilesData(userId) {
@@ -64,7 +84,7 @@ async function getFilesData(userId) {
 		const dataBase = client.db("fylo")
 		const fileDetails = await dataBase.collection("uploaded_files")
 		data = await fileDetails.find({userId: new ObjectId(userId)})
-		data = await data.toArray();
+		data = await data.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
 	}catch(err) {
 		data = [];
 		console.log(err);
@@ -72,6 +92,22 @@ async function getFilesData(userId) {
 		await client.close()
 	}
 	return {data};
+}
+
+
+async function getFileByHash(userId: string, hash: string, uploadedName) {
+	let fileData = null;
+	const client = new MongoClient(dbUri);
+	try {
+		const dataBase = client.db("fylo")
+		const fileDetails = await dataBase.collection("uploaded_files")
+		fileData = await fileDetails.findOne({userId: new ObjectId(userId), hash, uploadedName})
+	}catch(err) {
+		console.log(err);
+	}finally {
+		await client.close();
+	}
+	return {fileData};
 }
 
 async function createNewUser(userData) {
@@ -115,7 +151,7 @@ async function loginUser(userData) {
 
 function setCorsHeader(req, res, next) {
 	res.set("Access-Control-Allow-Origin", "http://localhost:5178")
-	res.set("Access-Control-Allow-Headers", "Content-Type, X-local-name")
+	res.set("Access-Control-Allow-Headers", "Content-Type, X-local-name, X-file-hash, X-resume-upload")
 	res.set("Access-Control-Max-Age", "86400");	// 24 hours, should change later
 	res.set("Access-Control-Allow-Credentials", "true");
 	res.set("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
@@ -142,6 +178,7 @@ function writeToDisk(data) {
 }
 
 async function userIdIsValid(id: string|undefined) {
+	id =  decrypt(id);
 	if (!id) {
 		return false
 	}
@@ -167,31 +204,125 @@ function writeToFile(filename: string, data) {
 	fs.closeSync(fd)
 }
 
+// start from here
+interface FileData {
+  uploadedName: string;
+  pathName: string;
+  size: number;
+  type: string;
+  sizeUploaded: number;
+  uri: string;
+  hash: string;
+  userId: string;
+  timeUploaded: string;
+}
+
+
+// todo: implement the encryption algorithm
+function encrypt(plainText: string) {
+	let cipherText = plainText;
+	return cipherText
+}
+
+// todo: implement the decryption algorithm
+function decrypt(cipherText: string) {
+	let plainText = cipherText;
+	return plainText;
+}
+
+// todo: implement proper pathname
+function generateUniqueFileName(request) {
+	return request.headers["x-local-name"] + ".UFILE";
+}
+
+function generateMetaData(request):FileData {
+	return  {
+		uploadedName: request.headers["x-local-name"],
+		pathName: generateUniqueFileName(request),
+		type: request.headers["content-type"],
+		size: parseInt(request.headers["content-length"]),
+		hash: request.headers["x-file-hash"],
+		userId: new ObjectId(decrypt(request.cookies.userId)),
+		sizeUploaded: 0,
+		uri: generateUrlSlug(),
+		timeUploaded: getCurrTime()
+	}
+}
+
+// to implement
+function headersAreValid(request) {
+	return true;
+}
+
+// todo: implement regular clearing of uncompleted uploads after a long time
 app.post("/upload-files",  async (req, res) => {
+	const uploadTracker = {fileId: "", sizeUploaded: 0};
+	let metaData = null;
+	let uploadedData = null;
+
 	if (!await userIdIsValid(req.cookies.userId)) {
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"})
 	}else {
-		const data = {name: req.headers["x-local-name"], type: req.headers["content-type"]} // todo: check if mime type is present and stop saving files as their local name
-		const uploadedData = await storeFileDetails([data], req.cookies.userId)
+		if (!headersAreValid(req)) {
+			res.status(400).json({msg: "Invalid headers!"})
+			return;
+		}
+		if (req.headers["x-resume-upload"] === "true") {
+			uploadedData = await getFileByHash(req.cookies.userId, req.headers["x-file-hash"], req.headers["x-local-name"])
+			if (!uploadedData.fileData) {
+				res.status(400).json({msg: "File to be updated doesn't exist!"})
+				return 
+			}
+			uploadTracker.sizeUploaded = uploadedData.fileData.sizeUploaded
+		}else {
+			metaData = generateMetaData(req)
+			uploadedData = await storeFileDetails(metaData);
+		}
+
+		uploadTracker.fileId = uploadedData._id;
+
 		req.on('data', (chunk)=>{
-			writeToFile("./uploads/"+req.headers["x-local-name"], chunk)
+			writeToFile("./uploads/"+uploadedData.pathName, chunk)
+			uploadTracker.sizeUploaded += chunk.length;
 		})
-		req.on('end', ()=>{
+
+		req.on('close', async () => {
 			if (!req.complete) {
-				// mark as incomplete in db or something like that
-			}else {
-				console.log(uploadedData[0])
-				res.status(200).send(JSON.stringify(uploadedData[0]))
+				console.log("CLIENT ABORTED")
+				const result = await addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
+				if (!result.acknowledged) {
+					// do something .... but what?
+				}
+			}
+		})
+
+		req.on('end', async ()=>{
+			console.log("CLIENT DIDN'T ABORT")
+			const result = await addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
+			if (!result.acknowledged) {
+				// do something .... but what?
+			}
+			if (req.complete) {
+				res.status(200).send(JSON.stringify(uploadedData))
 			}
 		})
 	}
 })
 
-app.post("/upload-history", async (req, res) => {
-	if (!await userIdIsValid(req.cookies.userId)) {
-		res.status(401).json({errorMsg: "Unauthorised! Pls login"})
-	}else  {
-		const historyData = await getFilesData(req.cookies.userId);
+
+app.get("/fileDetail/:fileHash", async (req, res) => {
+	console.log("here na")
+	if (!await userIdIsValid(req.cookies.userId)) { // perhaps this should even be a middleware
+		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
+	}else {
+		console.log(req.headers)
+		const responseData = await getFileByHash(decrypt(req.cookies.userId), decodeURIComponent(req.params.fileHash), req.headers["x-local-name"])
+		console.log(responseData)
+		if (!responseData.fileData){
+			res.status(400).json({msg: "BAD REQUEST!"})
+			return 
+		}
+		res.status(200).json(responseData)
 	}
 })
 
@@ -199,25 +330,25 @@ app.get("/files-data", async (req, res) => {
 	if (!await userIdIsValid(req.cookies.userId)) { // perhaps this should even be a middleware
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
 	}else{
-		const responseData = await getFilesData(req.cookies.userId)
+		const responseData = await getFilesData(decrypt(req.cookies.userId))
 		res.status(200).json(responseData)
 	}
 })
 
 app.get("/images/:fileUrl", async (req, res)=>{
-	const imgName = await getImageName(req.params.fileUrl);
-	if (!imgName){
+	const imgNames = await getImageNames(req.params.fileUrl);
+	if (!imgNames){
 		res.status(404).send("Image not found");
 		return;
 	}
-	if (!fs.existsSync(path.join(__dirname, 'uploads', imgName))) { // look into making it static later
+	if (!fs.existsSync(path.join(__dirname, 'uploads', imgNames.pathName))) { // look into making it static later
 		res.status(404).send("Image not found")
 	}
-	res.status(200).sendFile(imgName, {root: path.join(__dirname, 'uploads')}, function(err) {
+	res.status(200).sendFile(imgNames.uploadedName, {root: path.join(__dirname, 'uploads')}, function(err) {
 		if (err) {
 			console.log(err)
 		}else {
-			console.log("Sent:", imgName)
+			console.log("Sent:", imgNames.pathName)
 		}
 	})
 })
@@ -240,7 +371,7 @@ app.post("/login", async (req, res) => {
 	const user = await loginUser(req.body);
 	if (user) {
 		// TODO: change and encrypt credentials
-		res.cookie('userId', user._id, {httpOnly: true, secure: true, sameSite: "Strict", maxAge: 6.04e8}) // 7 days
+		res.cookie('userId', encrypt(user._id), {httpOnly: true, secure: true, sameSite: "Strict", maxAge: 6.04e8}) // 7 days
 		return res.status(200).json({msg: "success", loggedInUserName: user.email})
 	}else return res.status(404).json({msg: "User not found!"});
 })
