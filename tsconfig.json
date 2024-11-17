@@ -1,0 +1,9 @@
+{	"includes": ["/src"],
+	"compilerOptions": {
+		"noImplicitAny": true,
+		"modules": "nodenext",
+		"strictNullChecks": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+	}
+}
