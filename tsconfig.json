@@ -1,9 +1,11 @@
 {	"includes": ["/src"],
 	"compilerOptions": {
 		"noImplicitAny": true,
-		"modules": "nodenext",
+		"module": "nodenext",
 		"strictNullChecks": true,
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
+		"outDir": "dist",
+		//esmoduleinterop
 	}
 }
