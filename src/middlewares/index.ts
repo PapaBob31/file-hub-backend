@@ -11,7 +11,7 @@ export function setCorsHeaders(req: Request, res: Response, next: ()=>any):void 
 	}else next()
 }
 
-export function logRequestDetails(req: Request, res: Response, next: ()=>void) {
+export function logRequestDetails(req: Request, _res: Response, next: ()=>void) {
 	console.log(`${req.method} ${req.originalUrl}`)
 	next()
 }
