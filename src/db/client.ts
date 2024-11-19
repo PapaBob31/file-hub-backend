@@ -33,8 +33,8 @@ function decrypt(cipherText: string) {
 }
 
 // todo: find a way to implement schema validation and a better way to manage the connections
+// and when exactlly do I call close?
 export default class SyncedReqClient {
-	#connections = 0;
 	#client;
 	#dataBase;
 
@@ -43,20 +43,11 @@ export default class SyncedReqClient {
 		this.#dataBase = this.#client.db("fylo");
 	}
 
-	async #closeConnection() {
-		this.#connections--;
-		if (this.#connections === 0) {
-			await this.#client.close();
-			console.log("Yay!")
-		}
-	}
-
 	async getImageNames(uri: string): Promise<ImgData|null> {
 		let names: null|{pathName: string, uploadedName: string} = {pathName: "", uploadedName: ""};
 		try {
 			const fileDetails = await this.#dataBase.collection("uploaded_files");
 			const data = await fileDetails.findOne({uri});
-			this.#connections++;
 
 			if (data && data.type.startsWith("image/")) {
 				names.uploadedName = data.uploadedName;
@@ -65,9 +56,6 @@ export default class SyncedReqClient {
 		}catch(error) {
 			names = null
 			console.log(error);
-		}finally {
-			this.#connections--;
-			await this.#closeConnection();
 		}
 		return names;
 	}
@@ -78,13 +66,10 @@ export default class SyncedReqClient {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
 			const results = await fileDetails.insertOne(newFileDoc)
 			console.log(results)
-			this.#connections++;
 			insertedDoc._id = results.insertedId;
 		} catch(error) {
 			insertedDoc = null
 			console.log(error)
-		}finally {
-			await this.#closeConnection();
 		}
 		return insertedDoc
 	}
@@ -96,11 +81,8 @@ export default class SyncedReqClient {
 			const updates = await fileDetails.updateOne({_id: new ObjectId(fileId)}, {$set: {sizeUploaded}}) as UpdateResult;
 			if (updates.acknowledged)
 				result.acknowledged = true;
-			this.#connections++;
 		} catch(error) {
 			console.log(error)
-		}finally {
-			await this.#closeConnection();
 		}
 		return result;
 	}
@@ -110,27 +92,24 @@ export default class SyncedReqClient {
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
 			const findCursorObj = await fileDetails.find({userId: new ObjectId(userId)});
-			this.#connections++;
+			// try and limit the result somehow to manage memory
 			data = await findCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
 		}catch(err) {
 			data = [];
 			console.log(err);
-		}finally {
-			await this.#closeConnection();
 		}
 		return {data};
 	}
 
 	async getFileByHash(userId: string, hash: string, uploadedName: string) {
+		console.log(userId, hash, uploadedName)
 		let fileData:FileData|null = null;
 		try {
 			const fileDetails = await this.#dataBase.collection("uploaded_files")
 			fileData = await fileDetails.findOne<FileData>({userId: new ObjectId(userId), hash, uploadedName})
-			this.#connections++;
+			console.log("DEBUG!", fileData);
 		}catch(err) {
 			console.log(err);
-		}finally {
-			await this.#closeConnection();
 		}
 		return fileData;
 	}
@@ -140,7 +119,6 @@ export default class SyncedReqClient {
 		try {
 			const users = await this.#dataBase.collection("users")
 			const existingUser = await users.findOne({email: userData.email})
-			this.#connections++;
 			if (existingUser)
 				throw new Error("Email already in use")
 			await users.insertOne({email: userData.email, password: userData.password})
@@ -149,8 +127,6 @@ export default class SyncedReqClient {
 			if (err.message === "Email already in use")
 				status = err.message
 			else status = "failure" // todo: change this generic failure message to something like 'Email already in use'
-		}finally {
-			await this.#closeConnection();
 		}
 		return status;
 	}
@@ -160,33 +136,28 @@ export default class SyncedReqClient {
 		try {
 			const users = await this.#dataBase.collection("users")
 			user = await users.findOne<User>({email: userData.email, password: userData.password})
-			this.#connections++;
 			if (!user)
 				throw new Error("User doesn't esist!")
 		}catch(err) {
 			user = null
-		}finally {
-			await this.#closeConnection();
 		}
 		return user;
 	}
 
 	async getUserWithId(id: string) {
-		id = decrypt(id);
 		if (!id) {
 			return null
 		}
+		id = decrypt(id);
 		let user = null
 		try {
+			this.#client.connect();
 			const users = await this.#dataBase.collection("users")
 			user = await users.findOne<User>({_id: new ObjectId(id)})
-			this.#connections++;
 			if (!user)
 				user = null;
 		}catch(err) {
 			user = null;
-		}finally {
-			await this.#closeConnection();
 		}
 		return user
 	}	
