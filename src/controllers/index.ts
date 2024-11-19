@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "node:path";
 import { generateUrlSlug } from "./utilities"
 import SyncedReqClient, { type FileData } from "../db/client"
+import { ObjectId } from "mongodb"
 
 
 const connectionStr = "mongodb://127.0.0.1:27017/?directConnection=true&serverSelectionTimeoutMS=2000"; // search how to get connection string
@@ -38,7 +39,7 @@ function generateMetaData(request: Request):FileData {
 		type: request.headers["content-type"] as string,
 		size: parseInt(request.headers["content-length"] as string),
 		hash: request.headers["x-file-hash"] as string,
-		userId: decrypt(request.cookies.userId),
+		userId: new ObjectId(decrypt(request.cookies.userId)),
 		sizeUploaded: 0,
 		uri: generateUrlSlug(),
 		timeUploaded: getCurrTime()
@@ -53,8 +54,8 @@ function generateMetaData(request: Request):FileData {
 	})
 }*/
 
-function writeToFile(filename: string, data: any) {
-	const fd = fs.openSync(filename, 'a')
+function writeToFile(filename: string, data: any, mode: string) {
+	const fd = fs.openSync(filename, mode)
 	fs.writeSync(fd, data)
 	fs.closeSync(fd)
 }
@@ -62,14 +63,14 @@ function writeToFile(filename: string, data: any) {
 
 export async function loginHandler(req: Request, res: Response) {
 	if (!req.body || !req.body.password || !req.body.email) {
-		return res.status(400).json({error: "Invalid request body"});
+		return res.status(401).json({error: "Invalid login details!"});
 	}
 	const user = await dbClient.loginUser(req.body);
 	if (user) {
 		// TODO: change and encrypt credentials
 		res.cookie('userId', encrypt(user._id as string), {httpOnly: true, secure: true, sameSite: "strict", maxAge: 6.04e8}) // 7 days
 		return res.status(200).json({msg: "success", loggedInUserName: user.email})
-	}else return res.status(404).json({msg: "User not found!"});
+	}else return res.status(401).json({error: "Invalid login details!"});
 }
 
 export async function signupHandler(req: Request, res: Response) {
@@ -120,7 +121,9 @@ export async function fileUploadHandler(req: Request, res: Response) {
 
 		req.on('data', (chunk)=>{
 			const filePathName = (uploadedData as FileData).pathName
-			writeToFile("./uploads/"+filePathName, chunk)
+			if (!fs.existsSync("../uploads/"+filePathName)) {
+				writeToFile("../uploads/"+filePathName, chunk, 'w');
+			}else writeToFile("../uploads/"+filePathName, chunk, 'a');
 			uploadTracker.sizeUploaded += chunk.length;
 		})
 
