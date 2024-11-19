@@ -12,7 +12,7 @@ const portNo = 7200;
 app.use(cookieParser())
 app.use(logRequestDetails, setCorsHeaders)
 app.use(express.json())
-app.use(router);
+app.use('/', router);
 
 
 console.log(`listening on port: ${portNo}`)
