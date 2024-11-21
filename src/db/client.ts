@@ -1,13 +1,10 @@
 import { MongoClient, ObjectId, type UpdateResult } from "mongodb";
+import { generateUrlSlug } from "../controllers/utilities"
 
-interface ImgData {
-	pathName: string, 
-	uploadedName: string
-};
 
 export interface FileData {
 	_id?: string|ObjectId;
-	uploadedName: string;
+	name: string;
 	pathName: string;
 	type: string;
 	size: number;
@@ -16,6 +13,18 @@ export interface FileData {
 	uri: string;
 	timeUploaded: string;
 	userId: string|ObjectId;
+	parentFolderUri: string|ObjectId;
+}
+
+export interface Folder {
+	_id?: string|ObjectId;
+	uri: string;
+	name: string;
+	isRoot: boolean;
+	type: "folder";
+	parentFolderUri: string|ObjectId;
+	userId: string|ObjectId;
+	timeCreated: string;
 }
 
 export interface User {
@@ -23,6 +32,7 @@ export interface User {
 	email: string;
 	username: string;
 	password: string;
+	homeFolderUri: string;
 }
 
 
@@ -33,7 +43,7 @@ function decrypt(cipherText: string) {
 }
 
 // todo: find a way to implement schema validation and a better way to manage the connections
-// and when exactlly do I call close?
+// and when exactlly do I call the close method?
 export default class SyncedReqClient {
 	#client;
 	#dataBase;
@@ -43,21 +53,16 @@ export default class SyncedReqClient {
 		this.#dataBase = this.#client.db("fylo");
 	}
 
-	async getImageNames(uri: string): Promise<ImgData|null> {
-		let names: null|{pathName: string, uploadedName: string} = {pathName: "", uploadedName: ""};
+	async getFileDetails(uri: string): Promise<FileData|null> {
+		let data: null|FileData = null;
 		try {
-			const fileDetails = await this.#dataBase.collection("uploaded_files");
-			const data = await fileDetails.findOne({uri});
-
-			if (data && data.type.startsWith("image/")) {
-				names.uploadedName = data.uploadedName;
-				names.pathName = data.pathName;
-			}else names = null;
+			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files");
+			data = await fileDetails.findOne({uri});
 		}catch(error) {
-			names = null
+			data = null
 			console.log(error);
 		}
-		return names;
+		return data;
 	}
 
 	async storeFileDetails(newFileDoc: FileData) {
@@ -87,13 +92,21 @@ export default class SyncedReqClient {
 		return result;
 	}
 
-	async getFilesData(userId: string) {
-		let data:FileData[]|null = null;
+	async getFilesData(userId: string, folderUri: string) {
+		let data:(FileData|Folder)[]|null = null;
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
-			const findCursorObj = await fileDetails.find({userId: new ObjectId(userId)});
+			const folderDetails = await this.#dataBase.collection<Folder>("folders")
+
+			// todo: Change this to Promise.all or something
+			const fileCursorObj = await fileDetails.find({userId: new ObjectId(userId), parentFolderUri: new ObjectId(folderUri)});
+			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: new ObjectId(folderUri)});
 			// try and limit the result somehow to manage memory
-			data = await findCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
+			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
+			const foldersData = await folderCursorObj.toArray();
+
+			data = filesData.concat(foldersData)
+
 		}catch(err) {
 			data = [];
 			console.log(err);
@@ -101,12 +114,12 @@ export default class SyncedReqClient {
 		return {data};
 	}
 
-	async getFileByHash(userId: string, hash: string, uploadedName: string) {
-		console.log(userId, hash, uploadedName)
+	async getFileByHash(userId: string, hash: string, name: string) {
+		console.log(userId, hash, name)
 		let fileData:FileData|null = null;
 		try {
 			const fileDetails = await this.#dataBase.collection("uploaded_files")
-			fileData = await fileDetails.findOne<FileData>({userId: new ObjectId(userId), hash, uploadedName})
+			fileData = await fileDetails.findOne<FileData>({userId: new ObjectId(userId), hash, name})
 			console.log("DEBUG!", fileData);
 		}catch(err) {
 			console.log(err);
@@ -117,13 +130,32 @@ export default class SyncedReqClient {
 	async createNewUser(userData: User) {
 		let status = ""
 		try {
-			const users = await this.#dataBase.collection("users")
+			const users = await this.#dataBase.collection("users");
+
 			const existingUser = await users.findOne({email: userData.email})
 			if (existingUser)
 				throw new Error("Email already in use")
-			await users.insertOne({email: userData.email, password: userData.password})
+			const homeFolderUri = generateUrlSlug();
+			const queryResult = await users.insertOne(
+				{username: userData.username, email: userData.email, password: userData.password, homeFolderUri}
+			);
+			const queryResult2 = await this.createNewFolderEntry({
+				name: '',
+				parentFolderUri: '', // or null??
+				userId: new ObjectId(queryResult.insertedId),
+				type: "folder",
+				uri: homeFolderUri,
+				isRoot: true,
+				timeCreated: 'not implemented yet'
+			})
+
+			if (!queryResult.acknowledged || !queryResult2.acknowledged) {
+				throw new Error("Something went wrong")
+			}
+
 			status = "success"
 		}catch(err) {
+			// rollback? since at least one db request may hev been satisfied
 			if (err.message === "Email already in use")
 				status = err.message
 			else status = "failure" // todo: change this generic failure message to something like 'Email already in use'
@@ -160,5 +192,20 @@ export default class SyncedReqClient {
 			user = null;
 		}
 		return user
-	}	
+	}
+
+	async createNewFolderEntry(folderDoc: Folder) {
+		const folders = await this.#dataBase.collection<Folder>("folders");
+		let result = {acknowledged: false, insertedId: "", uri: ""};
+		try {
+			const queryResult = await folders.insertOne(folderDoc);
+			if (queryResult) {
+				result = {...queryResult, uri: folderDoc.uri};
+			}
+		}catch(err) {
+			console.log(err);
+			result.acknowledged = false;
+		}
+		return result;
+	}
 }
