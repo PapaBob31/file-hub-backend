@@ -27,22 +27,22 @@ function generateUniqueFileName(request: Request) {
 	return request.headers["x-local-name"] + ".UFILE";
 }
 
-
 function getCurrTime() {
 	return "Not implemented yet"
 }
 
 function generateMetaData(request: Request):FileData {
 	return  {
-		uploadedName: request.headers["x-local-name"] as string,
-		pathName: generateUniqueFileName(request),
+		name: request.headers["x-local-name"] as string,
+		pathName: generateUniqueFileName(request), // escape the names or something incase of path traversing file names if that's even a thing
 		type: request.headers["content-type"] as string,
 		size: parseInt(request.headers["content-length"] as string),
 		hash: request.headers["x-file-hash"] as string,
 		userId: new ObjectId(decrypt(request.cookies.userId)),
 		sizeUploaded: 0,
 		uri: generateUrlSlug(),
-		timeUploaded: getCurrTime()
+		timeUploaded: getCurrTime(),
+		parentFolderUri: request.params.folderUri,
 	}
 }
 
@@ -168,25 +168,75 @@ export async function filesRequestHandler(req: Request, res: Response) {
 	if (!user) { // perhaps this should even be a middleware
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
 	}else{
-		const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId))
+		const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId), req.params.folderId)
 		res.status(200).json({username: user.username, data: responseData.data})
 	}
 }
 
-export async function imgReqHandler(req: Request, res: Response) {
-	const imgNames = await dbClient.getImageNames(req.params.fileUrl);
-	if (!imgNames){
-		res.status(404).send("Image not found");
+export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
+	const user = await dbClient.getUserWithId(req.cookies.userId)
+	if (user) {
+		res.status(200).json({username: user.username, id: user._id, homeFolderUri: user.homeFolderUri})
+	}else {
+		res.status(401).json("Invalid Request! Unauthenticated User!")
+	}
+}
+
+export async function fileReqHandler(req: Request, res: Response) {
+	const fileDetails = await dbClient.getFileDetails(req.params.fileUri);
+	if (!fileDetails){
+		res.status(404).send("File not found");
 		return;
 	}
-	if (!fs.existsSync(path.join(__dirname, 'uploads', imgNames.pathName))) { // look into making it static later
+	if (!fileDetails.type.startsWith("image/") && !fileDetails.type.startsWith("video/")) {
+		res.status(400).send("Bad Request") // serves requests for only files that can be displayed in the browse
+		return;
+	}
+	if (!fs.existsSync(path.join(__dirname, 'uploads', fileDetails.pathName))) {
 		res.status(404).send("Image not found")
 	}
-	res.status(200).sendFile(imgNames.uploadedName, {root: path.join(__dirname, 'uploads')}, function(err) {
+	res.status(200).sendFile(fileDetails.name, {root: path.join(__dirname, 'uploads')}, function(err) {
 		if (err) {
 			console.log(err)
 		}else {
-			console.log("Sent:", imgNames.pathName)
+			console.log("Sent:", fileDetails.pathName)
 		}
 	})
+}
+
+function getFolderMetaData(req: Request) {
+	if (!req.body.name || !req.body.parentFolderUri) {
+		return null
+	}
+	return {
+		name: req.body.name,
+		parentFolderUri: req.body.parentFolderUri,
+		userId: new ObjectId(req.cookies.userId),
+		uri: generateUrlSlug(),
+		type: "folder",
+		timeCreated: 'not implemented yet'
+	}
+
+}
+
+// todo: Standardize the format of all your responses
+// password encryption, better uri geneartions?, auth middelware?, read up on time in js and mongodb
+// Query only the required fields. Stop querying all fields
+export async function createFolderReqHandler(req: Request, res: Response) {
+	const user = await dbClient.getUserWithId(req.cookies.userId)
+	if (!user) {
+		res.status(401).json({errorMsg: "Unauthorised! Pls login"});
+		return;
+	}
+
+	const payLoad = getFolderMetaData(req);
+
+	if (payLoad){
+		const result = await dbClient.createNewFolderEntry(payLoad);
+		if (!result.acknowledged) {
+			res.status(500).json({errorMsg: "Internal Server Error"})
+		}else {
+			res.status(201).json({msg: "Folder Created successfully", uri: result.uri})
+		}
+	}else res.status(400).json({errorMsg: "Bad Request!"})
 }
