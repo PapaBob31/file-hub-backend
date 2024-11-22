@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, 
+	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler,
 	filesRequestHandler, fileReqHandler, authHandler, createFolderReqHandler
 } from "../controllers";
 
@@ -14,5 +14,6 @@ router.get("/fileDetail/:fileHash", fileReqByHashHandler)
 router.get("/:folderUri/files-data", filesRequestHandler)
 router.get("/files/:fileUri", fileReqHandler)
 router.post("/create-folder", createFolderReqHandler)
+router.post("/upload-history", userUploadHistoryReqHandler)
 
 export default router;
