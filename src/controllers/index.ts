@@ -43,6 +43,8 @@ function generateMetaData(request: Request):FileData {
 		uri: generateUrlSlug(),
 		timeUploaded: getCurrTime(),
 		parentFolderUri: request.params.folderUri,
+		inHistory: true,
+		deleted: false,
 	}
 }
 
@@ -214,14 +216,16 @@ function getFolderMetaData(req: Request) {
 		userId: new ObjectId(req.cookies.userId),
 		uri: generateUrlSlug(),
 		type: "folder",
-		timeCreated: 'not implemented yet'
+		timeCreated: 'not implemented yet',
+		isRoot: false,
 	}
 
 }
 
-// todo: Standardize the format of all your responses
+// todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
 // password encryption, better uri geneartions?, auth middelware?, read up on time in js and mongodb
-// Query only the required fields. Stop querying all fields
+// Query only the required fields. Stop querying all fields, encrypt and decrypt all userIds as needed
+//  Add serious logging response type, db errors, server errors e.t.c.
 export async function createFolderReqHandler(req: Request, res: Response) {
 	const user = await dbClient.getUserWithId(req.cookies.userId)
 	if (!user) {
@@ -239,4 +243,21 @@ export async function createFolderReqHandler(req: Request, res: Response) {
 			res.status(201).json({msg: "Folder Created successfully", uri: result.uri})
 		}
 	}else res.status(400).json({errorMsg: "Bad Request!"})
+}
+
+
+export async function userUploadHistoryReqHandler(req: Request, res: Response) {
+	const user = await dbClient.getUserWithId(req.cookies.userId)
+	if (!user) {
+		res.status(401).json({errorMsg: "Unauthorised! Pls login"});
+		return;
+	}
+
+	const userUploadHistory = await dbClient.getUserUploadHistory(req.cookies.userId) // decrypt first when the feature is implemented
+	if (!userUploadHistory) {
+		res.status(500).json({errorMsg: "Internal db error"})
+	}else {
+		res.status(200).json({data: userUploadHistory})
+	}
+
 }

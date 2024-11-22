@@ -14,6 +14,8 @@ export interface FileData {
 	timeUploaded: string;
 	userId: string|ObjectId;
 	parentFolderUri: string|ObjectId;
+	inHistory: boolean;
+	deleted: boolean;
 }
 
 export interface Folder {
@@ -207,5 +209,21 @@ export default class SyncedReqClient {
 			result.acknowledged = false;
 		}
 		return result;
+	}
+
+	async getUserUploadHistory(userId: string) {
+		const uploadHistory = await this.#dataBase.collection<FileData>("uploaded_files");
+		let results:FileData[]|null = [];
+
+		try {
+			const queryResult = await uploadHistory.find({userId: new ObjectId(), inHistory: true});
+			results = await queryResult.toArray();
+
+		}catch(err) {
+			results = null;
+			console.log(err);
+		}
+
+		return results;
 	}
 }
