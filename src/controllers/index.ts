@@ -170,7 +170,7 @@ export async function filesRequestHandler(req: Request, res: Response) {
 	if (!user) { // perhaps this should even be a middleware
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
 	}else{
-		const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId), req.params.folderId)
+		const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId), req.params.folderUri)
 		res.status(200).json({username: user.username, data: responseData.data})
 	}
 }
@@ -194,12 +194,13 @@ export async function fileReqHandler(req: Request, res: Response) {
 		res.status(400).send("Bad Request") // serves requests for only files that can be displayed in the browse
 		return;
 	}
-	if (!fs.existsSync(path.join(__dirname, 'uploads', fileDetails.pathName))) {
+	// todo: add proper path name and try and make every type of video supported on most browsers [start from firefox not supporting mkv]
+	if (!fs.existsSync(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)) {
 		res.status(404).send("Image not found")
 	}
-	res.status(200).sendFile(fileDetails.name, {root: path.join(__dirname, 'uploads')}, function(err) {
+	res.status(200).sendFile(fileDetails.pathName, {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads`}, function(err) {
 		if (err) {
-			console.log(err)
+			console.log(err, '45')
 		}else {
 			console.log("Sent:", fileDetails.pathName)
 		}
@@ -207,6 +208,7 @@ export async function fileReqHandler(req: Request, res: Response) {
 }
 
 function getFolderMetaData(req: Request) {
+	console.log(req.body);
 	if (!req.body.name || !req.body.parentFolderUri) {
 		return null
 	}
@@ -225,7 +227,8 @@ function getFolderMetaData(req: Request) {
 // todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
 // password encryption, better uri geneartions?, auth middelware?, read up on time in js and mongodb
 // Query only the required fields. Stop querying all fields, encrypt and decrypt all userIds as needed
-//  Add serious logging response type, db errors, server errors e.t.c.
+// Add serious logging => response type, db errors, server errors e.t.c.
+// Add types to evrything!
 export async function createFolderReqHandler(req: Request, res: Response) {
 	const user = await dbClient.getUserWithId(req.cookies.userId)
 	if (!user) {

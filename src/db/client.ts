@@ -100,9 +100,9 @@ export default class SyncedReqClient {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
 			const folderDetails = await this.#dataBase.collection<Folder>("folders")
 
-			// todo: Change this to Promise.all or something
-			const fileCursorObj = await fileDetails.find({userId: new ObjectId(userId), parentFolderUri: new ObjectId(folderUri)});
-			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: new ObjectId(folderUri)});
+			// todo: Change this to Promise.all or something and filter out the files with complete uploads first
+			const fileCursorObj = await fileDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri});
+			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
 			// try and limit the result somehow to manage memory
 			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
 			const foldersData = await folderCursorObj.toArray();
@@ -157,7 +157,7 @@ export default class SyncedReqClient {
 
 			status = "success"
 		}catch(err) {
-			// rollback? since at least one db request may hev been satisfied
+			// rollback? since at least one db request may have been satisfied
 			if (err.message === "Email already in use")
 				status = err.message
 			else status = "failure" // todo: change this generic failure message to something like 'Email already in use'
@@ -216,7 +216,7 @@ export default class SyncedReqClient {
 		let results:FileData[]|null = [];
 
 		try {
-			const queryResult = await uploadHistory.find({userId: new ObjectId(), inHistory: true});
+			const queryResult = await uploadHistory.find({userId: new ObjectId(userId), inHistory: true});
 			results = await queryResult.toArray();
 
 		}catch(err) {
