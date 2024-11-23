@@ -14,6 +14,6 @@ router.get("/fileDetail/:fileHash", fileReqByHashHandler)
 router.get("/:folderUri/files-data", filesRequestHandler)
 router.get("/files/:fileUri", fileReqHandler)
 router.post("/create-folder", createFolderReqHandler)
-router.post("/upload-history", userUploadHistoryReqHandler)
+router.get("/upload-history", userUploadHistoryReqHandler)
 
 export default router;
