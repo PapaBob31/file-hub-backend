@@ -1,13 +1,9 @@
 import { type Request, type Response } from "express";
 import fs from "fs";
-import path from "node:path";
+// import path from "node:path";
 import { generateUrlSlug } from "./utilities"
-import SyncedReqClient, { type FileData } from "../db/client"
+import dbClient, { type FileData } from "../db/client"
 import { ObjectId } from "mongodb"
-
-
-const connectionStr = "mongodb://127.0.0.1:27017/?directConnection=true&serverSelectionTimeoutMS=2000"; // search how to get connection string
-const dbClient = new SyncedReqClient(connectionStr)
 
 
 // todo: implement the encryption algorithm
@@ -48,14 +44,6 @@ function generateMetaData(request: Request):FileData {
 	}
 }
 
-/*function writeToDisk(data) {
-	data.forEach(fileData => {
-		const fd = fs.openSync(`./uploads/${fileData.name}`, 'w')
-		fs.writeSync(fd, fileData.file)
-		fs.closeSync(fd)
-	})
-}*/
-
 function writeToFile(filename: string, data: any, mode: string) {
 	const fd = fs.openSync(filename, mode)
 	fs.writeSync(fd, data)
@@ -85,8 +73,10 @@ export async function signupHandler(req: Request, res: Response) {
 	}else return res.status(500).json({msg: "Internal Server Error"});
 }
 
-// to implement
 function headersAreValid(request: Request) {
+	if (!request.headers["x-file-hash"] || !request.headers["x-local-name"]) {
+		return false
+	}
 	return true;
 }
 
@@ -96,83 +86,76 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	let metaData = null;
 	let uploadedData: FileData|null = null;
 
-	if (!await dbClient.getUserWithId(req.cookies.userId)) {
-		res.status(401).json({errorMsg: "Unauthorised! Pls login"})
-	}else {
-		if (!headersAreValid(req)) {
-			res.status(400).json({msg: "Invalid headers!"})
-			return;
-		}
-		if (req.headers["x-resume-upload"] === "true") {
-			uploadedData = await dbClient.getFileByHash(req.cookies.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string,)
-			if (!uploadedData) {
-				res.status(400).json({msg: "File to be updated doesn't exist!"})
-				return 
-			}
-			uploadTracker.sizeUploaded = uploadedData.sizeUploaded
-		}else {
-			metaData = generateMetaData(req)
-			uploadedData = await dbClient.storeFileDetails(metaData);
-		}
-
+	if (!headersAreValid(req)) {
+		res.status(400).json({msg: "Invalid headers!"})
+		return;
+	}
+	if (req.headers["x-resume-upload"] === "true") {
+		uploadedData = await dbClient.getFileByHash(req.cookies.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string,)
 		if (!uploadedData) {
-			res.status(400).json({msg: "Invalid request!"});
-			return;
+			res.status(400).json({msg: "File to be updated doesn't exist!"})
+			return 
 		}
-		uploadTracker.fileId = uploadedData._id as string;
+		uploadTracker.sizeUploaded = uploadedData.sizeUploaded
+	}else {
+		metaData = generateMetaData(req)
+		uploadedData = await dbClient.storeFileDetails(metaData);
+	}
 
-		req.on('data', (chunk)=>{
-			const filePathName = (uploadedData as FileData).pathName
-			if (!fs.existsSync("../uploads/"+filePathName)) {
-				writeToFile("../uploads/"+filePathName, chunk, 'w');
-			}else writeToFile("../uploads/"+filePathName, chunk, 'a');
-			uploadTracker.sizeUploaded += chunk.length;
-		})
+	if (!uploadedData) {
+		res.status(400).json({msg: "Invalid request!"});
+		return;
+	}
+	uploadTracker.fileId = uploadedData._id as string;
 
-		req.on('close', async () => {
-			if (!req.complete) {
-				console.log("CLIENT ABORTED")
-				const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
-				if (!result.acknowledged) {
-					// do something .... but what?
-				}
-			}
-		})
+	req.on('data', (chunk)=>{
+		const filePathName = (uploadedData as FileData).pathName
+		if (!fs.existsSync("../uploads/"+filePathName)) {
+			writeToFile("../uploads/"+filePathName, chunk, 'w');
+		}else writeToFile("../uploads/"+filePathName, chunk, 'a');
+		uploadTracker.sizeUploaded += chunk.length;
+	})
 
-		req.on('end', async ()=>{
-			console.log("CLIENT DIDN'T ABORT")
+	req.on('close', async () => {
+		if (!req.complete) {
+			console.log("CLIENT ABORTED")
 			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
 			if (!result.acknowledged) {
 				// do something .... but what?
 			}
-			if (req.complete) {
-				res.status(200).send(JSON.stringify(uploadedData))
-			}
-		})
-	}
+		}
+	})
+
+	req.on('end', async ()=>{
+		console.log("CLIENT DIDN'T ABORT")
+		const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
+		if (!result.acknowledged) {
+			// do something .... but what?
+		}
+		if (req.complete) {
+			res.status(200).send(JSON.stringify(uploadedData))
+		}
+	})
 }
 
 export async function fileReqByHashHandler(req: Request, res: Response) {
-	if (!await dbClient.getUserWithId(req.cookies.userId)) { // perhaps this should even be a middleware
-		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
-	}else {
-		const responseData = await dbClient.getFileByHash(decrypt(req.cookies.userId), decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string)
-		if (!responseData){
-			res.status(400).json({msg: "BAD REQUEST!"})
-			return 
-		}
-		res.status(200).json(responseData)
+	if (!req.headers["x-local-name"]) {
+		res.status(400).json({msg: "BAD REQUEST!"})
+		return;
 	}
+	const responseData = await dbClient.getFileByHash(
+		decrypt(req.cookies.userId), decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string
+		)
+	if (!responseData){
+		res.status(400).json({msg: "BAD REQUEST!"})
+		return 
+	}
+	res.status(200).json(responseData)
 }
 
 export async function filesRequestHandler(req: Request, res: Response) {
-	const user = await dbClient.getUserWithId(req.cookies.userId)
-	if (!user) { // perhaps this should even be a middleware
-		res.status(401).json({errorMsg: "Unauthorised! Pls login"}) // unauthorised 401 or 403?
-	}else{
-		const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId), req.params.folderUri)
-		res.status(200).json({username: user.username, data: responseData.data})
-	}
+	const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId), req.params.folderUri)
+	res.status(200).json({data: responseData.data})
 }
 
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
@@ -184,7 +167,7 @@ export async function authHandler(req: Request, res: Response) { // yep. turn it
 	}
 }
 
-export async function fileReqHandler(req: Request, res: Response) {
+export async function singleFileReqHandler(req: Request, res: Response) {
 	const fileDetails = await dbClient.getFileDetails(req.params.fileUri);
 	if (!fileDetails){
 		res.status(404).send("File not found");
@@ -208,7 +191,6 @@ export async function fileReqHandler(req: Request, res: Response) {
 }
 
 function getFolderMetaData(req: Request) {
-	console.log(req.body);
 	if (!req.body.name || !req.body.parentFolderUri) {
 		return null
 	}
@@ -230,12 +212,6 @@ function getFolderMetaData(req: Request) {
 // Add serious logging => response type, db errors, server errors e.t.c.
 // Add types to evrything!
 export async function createFolderReqHandler(req: Request, res: Response) {
-	const user = await dbClient.getUserWithId(req.cookies.userId)
-	if (!user) {
-		res.status(401).json({errorMsg: "Unauthorised! Pls login"});
-		return;
-	}
-
 	const payLoad = getFolderMetaData(req);
 
 	if (payLoad){
@@ -250,12 +226,6 @@ export async function createFolderReqHandler(req: Request, res: Response) {
 
 
 export async function userUploadHistoryReqHandler(req: Request, res: Response) {
-	const user = await dbClient.getUserWithId(req.cookies.userId)
-	if (!user) {
-		res.status(401).json({errorMsg: "Unauthorised! Pls login"});
-		return;
-	}
-
 	const userUploadHistory = await dbClient.getUserUploadHistory(req.cookies.userId) // decrypt first when the feature is implemented
 	if (!userUploadHistory) {
 		res.status(500).json({errorMsg: "Internal db error"})

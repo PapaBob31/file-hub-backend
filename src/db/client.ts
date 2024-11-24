@@ -45,8 +45,8 @@ function decrypt(cipherText: string) {
 }
 
 // todo: find a way to implement schema validation and a better way to manage the connections
-// and when exactlly do I call the close method?
-export default class SyncedReqClient {
+// and when exactly do I call the close method?
+class SyncedReqClient {
 	#client;
 	#dataBase;
 
@@ -216,7 +216,7 @@ export default class SyncedReqClient {
 		let results:FileData[]|null = [];
 
 		try {
-			const queryResult = await uploadHistory.find({userId: new ObjectId(userId), inHistory: true});
+			const queryResult = await uploadHistory.find({userId: new ObjectId(), inHistory: true});
 			results = await queryResult.toArray();
 
 		}catch(err) {
@@ -227,3 +227,8 @@ export default class SyncedReqClient {
 		return results;
 	}
 }
+
+const connectionStr = "mongodb://127.0.0.1:27017/?directConnection=true&serverSelectionTimeoutMS=2000"; // search how to get connection string
+const dbClient = new SyncedReqClient(connectionStr)
+
+export default dbClient;
