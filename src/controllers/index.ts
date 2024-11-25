@@ -133,7 +133,8 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			// do something .... but what?
 		}
 		if (req.complete) {
-			res.status(200).send(JSON.stringify(uploadedData))
+			uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
+			res.status(200).send(JSON.stringify(uploadedData)) // change the size before sending
 		}
 	})
 }

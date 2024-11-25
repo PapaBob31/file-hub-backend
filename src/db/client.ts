@@ -101,7 +101,7 @@ class SyncedReqClient {
 			const folderDetails = await this.#dataBase.collection<Folder>("folders")
 
 			// todo: Change this to Promise.all or something and filter out the files with complete uploads first
-			const fileCursorObj = await fileDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri});
+			const fileCursorObj = await fileDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, $expr: {size: "$sizeUploaded"}});
 			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
 			// try and limit the result somehow to manage memory
 			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
@@ -216,7 +216,7 @@ class SyncedReqClient {
 		let results:FileData[]|null = [];
 
 		try {
-			const queryResult = await uploadHistory.find({userId: new ObjectId(), inHistory: true});
+			const queryResult = await uploadHistory.find({userId: new ObjectId(userId), inHistory: true});
 			results = await queryResult.toArray();
 
 		}catch(err) {
