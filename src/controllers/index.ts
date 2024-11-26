@@ -38,9 +38,11 @@ function generateMetaData(request: Request):FileData {
 		sizeUploaded: 0,
 		uri: generateUrlSlug(),
 		timeUploaded: getCurrTime(),
+		lastModified: getCurrTime(),
 		parentFolderUri: request.params.folderUri,
 		inHistory: true,
 		deleted: false,
+		favourite: false,
 	}
 }
 
@@ -134,7 +136,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		}
 		if (req.complete) {
 			uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
-			res.status(200).send(JSON.stringify(uploadedData)) // change the size before sending
+			res.status(200).send(JSON.stringify(uploadedData))
 		}
 	})
 }
@@ -234,4 +236,38 @@ export async function userUploadHistoryReqHandler(req: Request, res: Response) {
 		res.status(200).json({data: userUploadHistory})
 	}
 
+}
+
+export async function fileDelReqHandler(req: Request, res: Response) {
+	const results = await dbClient.deleteFile(req.cookies.userId, req.params.fileUri)
+	if (results.acknowledged) {
+		res.status(200).json({msg: "File deleted successfully"})
+	}else {
+		res.status(404).json({msg: "Target resource was not found"}) // or should it be 403?
+	}
+}
+
+export async function newFavFileReqHandler(req: Request, res: Response) {
+	const result = await dbClient.addFileToFavourites(req.cookies.userId, req.params.ffileUri)
+	if (result.acknowledged){
+		res.status(200).json({msg: "File added to favourites"})
+	}else {
+		res.status(404).json({msg: "Target resource was not found"}) // or should it be 403?
+	}
+	
+}
+
+export async function fileRenameHandler(req: Request, res: Response) {
+	if (!req.body.newName){
+		res.status(400).json({msg: "Invalid request body"})
+		return;
+	}
+
+	const results = await dbClient.renameFile(req.cookies.userId, req.params.fileUri, req.body.newName)
+	console.log(results)
+	if (results.acknowledged) {
+		res.status(200).json({msg: "File Renamed successfully"})
+	}else {
+		res.status(404).json({msg: "Target resource was not found"}) // or should it be 403?
+	}
 }
