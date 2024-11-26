@@ -12,6 +12,8 @@ export interface FileData {
 	sizeUploaded: number;
 	uri: string;
 	timeUploaded: string;
+	lastModified: string;
+	favourite: boolean;
 	userId: string|ObjectId;
 	parentFolderUri: string|ObjectId;
 	inHistory: boolean;
@@ -27,6 +29,7 @@ export interface Folder {
 	parentFolderUri: string|ObjectId;
 	userId: string|ObjectId;
 	timeCreated: string;
+	lastModified: string;
 }
 
 export interface User {
@@ -44,7 +47,8 @@ function decrypt(cipherText: string) {
 	return plainText;
 }
 
-// todo: find a way to implement schema validation and a better way to manage the connections
+// todo: find a way to implement schema validation and a better way to manage the connections,
+// Check if db.collection actually returns a promise or not
 // and when exactly do I call the close method?
 class SyncedReqClient {
 	#client;
@@ -101,7 +105,8 @@ class SyncedReqClient {
 			const folderDetails = await this.#dataBase.collection<Folder>("folders")
 
 			// todo: Change this to Promise.all or something and filter out the files with complete uploads first
-			const fileCursorObj = await fileDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, $expr: {size: "$sizeUploaded"}});
+			const fileCursorObj = await fileDetails.find(
+				{userId: new ObjectId(userId), parentFolderUri: folderUri, $expr: {size: "$sizeUploaded"}, deleted: false});
 			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
 			// try and limit the result somehow to manage memory
 			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
@@ -148,7 +153,8 @@ class SyncedReqClient {
 				type: "folder",
 				uri: homeFolderUri,
 				isRoot: true,
-				timeCreated: 'not implemented yet'
+				timeCreated: 'not implemented yet',
+				lastModified: 'not implemented yet'
 			})
 
 			if (!queryResult.acknowledged || !queryResult2.acknowledged) {
@@ -225,6 +231,39 @@ class SyncedReqClient {
 		}
 
 		return results;
+	}
+
+	async deleteFile(userId: string, fileUri: string)  {
+		const uploadedFiles = await this.#dataBase.collection<File>("uploaded_files")
+		try {
+			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {deleted: true}})
+			return queryResults;
+		}catch(err) {
+			console.log(err)
+			return {acknowledged: false, modifiedCount: 0};
+		}
+	}
+
+	async renameFile(userId: string, fileUri: string, newName: string) {
+		const uploadedFiles = await this.#dataBase.collection("uploaded_files");
+		try {
+			const queryResults = uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {name: newName}})
+			return queryResults;
+		}catch(err) {
+			console.log(err)
+			return {acknowledged: false, modifiedCount: 0}
+		}
+	}
+
+	async addFileToFavourites(userId: string, fileUri: string) {
+		const uploadedFiles = await this.#dataBase.collection<File>("uploaded_files");
+		try {
+			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {favourite: true}})
+			return queryResults;
+		}catch(err) {
+			console.log(err);
+			return {acknowledged: false, modifiedCount: 0}
+		}
 	}
 }
 
