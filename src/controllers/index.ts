@@ -23,10 +23,6 @@ function generateUniqueFileName(request: Request) {
 	return request.headers["x-local-name"] + ".UFILE";
 }
 
-function getCurrTime() {
-	return "Not implemented yet"
-}
-
 function generateMetaData(request: Request):FileData {
 	return  {
 		name: request.headers["x-local-name"] as string,
@@ -37,8 +33,8 @@ function generateMetaData(request: Request):FileData {
 		userId: new ObjectId(decrypt(request.cookies.userId)),
 		sizeUploaded: 0,
 		uri: generateUrlSlug(),
-		timeUploaded: getCurrTime(),
-		lastModified: getCurrTime(),
+		timeUploaded: (new Date()).toISOString(),
+		lastModified: (new Date()).toISOString(),
 		parentFolderUri: request.params.folderUri,
 		inHistory: true,
 		deleted: false,
@@ -136,6 +132,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		}
 		if (req.complete) {
 			uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
+			console.log(uploadedData)
 			res.status(200).send(JSON.stringify(uploadedData))
 		}
 	})
@@ -203,7 +200,7 @@ function getFolderMetaData(req: Request) {
 		userId: new ObjectId(req.cookies.userId),
 		uri: generateUrlSlug(),
 		type: "folder",
-		timeCreated: 'not implemented yet',
+		timeCreated: (new Date()).toISOString(),
 		isRoot: false,
 	}
 
