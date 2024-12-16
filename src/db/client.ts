@@ -38,6 +38,9 @@ export interface User {
 	username: string;
 	password: string;
 	homeFolderUri: string;
+	plan: string;
+	storageCapacity: number;
+	usedStorage: number
 }
 
 
@@ -85,12 +88,30 @@ class SyncedReqClient {
 		return insertedDoc
 	}
 
-	async addUploadedFileSize(fileId: string, sizeUploaded: number) : Promise<{acknowledged: boolean}> {
+
+	async updateUsedUserStorage(userId: string, storageModification: number) {
+		const user = await this.getUserWithId(userId);
+		if (!user)
+			return false
+		try {
+			const users = await this.#dataBase.collection("users")
+			const updates = await users.updateOne({_id: new ObjectId(user._id)}, {$set: {usedStorage: user.usedStorage+storageModification}})
+			if (updates.acknowledged)
+				return true
+		}catch (err) {
+			console.log(err)
+			return false
+		}
+	}
+
+	// read up on mongodb's concurrency control 
+	async addUploadedFileSize(fileId: string, sizeUploaded: number, userId: string, uploadedDataLen: number) : Promise<{acknowledged: boolean}> {
 		let result = {acknowledged: false};
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
 			const updates = await fileDetails.updateOne({_id: new ObjectId(fileId)}, {$set: {sizeUploaded}}) as UpdateResult;
-			if (updates.acknowledged)
+			const userStorageUpdated = await this.updateUsedUserStorage(userId, uploadedDataLen)
+			if (updates.acknowledged && userStorageUpdated)
 				result.acknowledged = true;
 		} catch(error) {
 			console.log(error)
@@ -236,7 +257,14 @@ class SyncedReqClient {
 	async deleteFile(userId: string, fileUri: string)  {
 		const uploadedFiles = await this.#dataBase.collection<File>("uploaded_files")
 		try {
+			const fileDetails = await uploadedFiles.findOne({userId: new ObjectId(userId), uri: fileUri})
 			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {deleted: true}})
+			if (!fileDetails || !queryResults)
+				throw new Error("File doesn't exist")
+			const userStorageUpdated = await this.updateUsedUserStorage(userId, -fileDetails.size)
+			if (!userStorageUpdated)
+				throw new Error("File doesn't exist")
+			// delete from disk too
 			return queryResults;
 		}catch(err) {
 			console.log(err)

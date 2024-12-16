@@ -94,7 +94,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			res.status(400).json({msg: "File to be updated doesn't exist!"})
 			return 
 		}
-		uploadTracker.sizeUploaded = uploadedData.sizeUploaded
+		// uploadTracker.sizeUploaded = uploadedData.sizeUploaded
 	}else {
 		metaData = generateMetaData(req)
 		uploadedData = await dbClient.storeFileDetails(metaData);
@@ -117,7 +117,9 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	req.on('close', async () => {
 		if (!req.complete) {
 			console.log("CLIENT ABORTED")
-			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
+			const lengthOfRecvdData = uploadTracker.sizeUploaded;
+			uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
+			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.cookies.userId, lengthOfRecvdData)
 			if (!result.acknowledged) {
 				// do something .... but what?
 			}
@@ -126,7 +128,9 @@ export async function fileUploadHandler(req: Request, res: Response) {
 
 	req.on('end', async ()=>{
 		console.log("CLIENT DIDN'T ABORT")
-		const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded)
+		const lengthOfRecvdData = uploadTracker.sizeUploaded;
+		uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
+		const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.cookies.userId, lengthOfRecvdData)
 		if (!result.acknowledged) {
 			// do something .... but what?
 		}
@@ -161,7 +165,7 @@ export async function filesRequestHandler(req: Request, res: Response) {
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
 	const user = await dbClient.getUserWithId(req.cookies.userId)
 	if (user) {
-		res.status(200).json({username: user.username, id: user._id, homeFolderUri: user.homeFolderUri})
+		res.status(200).json(user)
 	}else {
 		res.status(401).json("Invalid Request! Unauthenticated User!")
 	}
@@ -207,7 +211,7 @@ function getFolderMetaData(req: Request) {
 }
 
 // todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
-// password encryption, better uri geneartions?, auth middelware?, read up on time in js and mongodb
+// password encryption, better uri generations?, auth middelware?, read up on time in js and mongodb
 // Query only the required fields. Stop querying all fields, encrypt and decrypt all userIds as needed
 // Add serious logging => response type, db errors, server errors e.t.c.
 // Add types to evrything!
