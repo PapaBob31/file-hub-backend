@@ -11,7 +11,7 @@ const router = Router()
 router.post("/login", loginHandler);
 router.post("/signup", signupHandler)
 router.post("/auth-user-details", authHandler)
-router.post("/:folderUri/upload-file", fileUploadHandler); // rename this route since only one file is being uploaded at a time;
+router.post("/:folderUri/upload-file", fileUploadHandler);
 router.get("/fileDetail/:fileHash", fileReqByHashHandler)
 router.get("/:folderUri/files-data", filesRequestHandler)
 router.get("/files/:fileUri", singleFileReqHandler)
