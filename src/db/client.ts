@@ -1,5 +1,6 @@
 import { MongoClient, ObjectId, type UpdateResult } from "mongodb";
 import { generateUrlSlug } from "../controllers/utilities"
+import { scryptSync, randomBytes } from "node:crypto"
 
 
 export interface FileData {
@@ -37,10 +38,12 @@ export interface User {
 	email: string;
 	username: string;
 	password: string;
+	salt: string;
 	homeFolderUri: string;
 	plan: string;
 	storageCapacity: number;
-	usedStorage: number
+	usedStorage: number;
+	// date account was created?
 }
 
 
@@ -53,6 +56,7 @@ function decrypt(cipherText: string) {
 // todo: find a way to implement schema validation and a better way to manage the connections,
 // Check if db.collection actually returns a promise or not
 // and when exactly do I call the close method?
+// implement constraints
 class SyncedReqClient {
 	#client;
 	#dataBase;
@@ -164,9 +168,15 @@ class SyncedReqClient {
 			if (existingUser)
 				throw new Error("Email already in use")
 			const homeFolderUri = generateUrlSlug();
+			const uniqueSalt = randomBytes(32).toString('hex');
+			const passwordHash = scryptSync(userData.password, uniqueSalt, 64, {N: 8192, p: 10}).toString('hex')
 			const queryResult = await users.insertOne(
-				{username: userData.username, email: userData.email, password: userData.password, homeFolderUri}
+				{username: userData.username, email: userData.email, salt: uniqueSalt, password: passwordHash, homeFolderUri}
 			);
+			if (!queryResult.acknowledged) {
+				throw new Error("Something went wrong")
+			}
+
 			const queryResult2 = await this.createNewFolderEntry({
 				name: '',
 				parentFolderUri: '', // or null??
@@ -178,13 +188,13 @@ class SyncedReqClient {
 				lastModified: 'not implemented yet'
 			})
 
-			if (!queryResult.acknowledged || !queryResult2.acknowledged) {
+			if (!queryResult2.acknowledged) {
+				await users.deleteOne({username: userData.username, email: userData.email}) // what if this fails too
 				throw new Error("Something went wrong")
 			}
 
 			status = "success"
 		}catch(err) {
-			// rollback? since at least one db request may have been satisfied
 			if (err.message === "Email already in use")
 				status = err.message
 			else status = "failure" // todo: change this generic failure message to something like 'Email already in use'
@@ -192,13 +202,15 @@ class SyncedReqClient {
 		return status;
 	}
 
-	async loginUser(userData: User) {
+	async loginUser(loginData: User) {
 		let user = null
 		try {
 			const users = await this.#dataBase.collection("users")
-			user = await users.findOne<User>({email: userData.email, password: userData.password})
+			user = await users.findOne<User>({email: loginData.email})
 			if (!user)
 				throw new Error("User doesn't esist!")
+			if (user.password !== scryptSync(loginData.password, user.salt, 64, {N: 8192, p: 10}).toString('hex'))
+				throw new Error("Invalid password")
 		}catch(err) {
 			user = null
 		}
@@ -295,7 +307,7 @@ class SyncedReqClient {
 	}
 }
 
-const connectionStr = "mongodb://127.0.0.1:27017/?directConnection=true&serverSelectionTimeoutMS=2000"; // search how to get connection string
+const connectionStr = process.env.DB_CONNECTION_STRING as string; // search how to get connection string
 const dbClient = new SyncedReqClient(connectionStr)
 
 export default dbClient;
