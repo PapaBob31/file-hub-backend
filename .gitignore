@@ -1,3 +1,5 @@
 node_modules 
 src/uploads
 src/dist
+.env.local
+.env.production
