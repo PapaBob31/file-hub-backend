@@ -47,12 +47,6 @@ export interface User {
 }
 
 
-// todo: implement the decryption algorithm
-function decrypt(cipherText: string) {
-	let plainText = cipherText;
-	return plainText;
-}
-
 // todo: find a way to implement schema validation and a better way to manage the connections,
 // Check if db.collection actually returns a promise or not
 // and when exactly do I call the close method?
@@ -64,6 +58,10 @@ class SyncedReqClient {
 	constructor(connectionURI: string) {
 		this.#client = new MongoClient(connectionURI);
 		this.#dataBase = this.#client.db("fylo");
+	}
+
+	getMongoClient() {
+		return this.#client;
 	}
 
 	async getFileDetails(uri: string): Promise<FileData|null> {
@@ -218,10 +216,6 @@ class SyncedReqClient {
 	}
 
 	async getUserWithId(id: string) {
-		if (!id) {
-			return null
-		}
-		id = decrypt(id);
 		let user = null
 		try {
 			this.#client.connect();
@@ -309,5 +303,5 @@ class SyncedReqClient {
 
 const connectionStr = process.env.DB_CONNECTION_STRING as string; // search how to get connection string
 const dbClient = new SyncedReqClient(connectionStr)
-
+export const sessionStoreClient = dbClient.getMongoClient()
 export default dbClient;

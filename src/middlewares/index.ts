@@ -1,8 +1,28 @@
 import {Response, Request} from "express";
-import dbClient from "../db/client"
+import dbClient, { sessionStoreClient } from "../db/client"
+import session from "express-session"
+import MongoStore from "connect-mongo"
+
+
+const sessionSecretArray = JSON.parse(process.env.SESSION_SECRET as string) as string[]
+let hasHttps = true
+if (process.env.MODE === "development") {
+	hasHttps = false
+}
+
+export const loginSession = session({
+	name: process.env.name + 'Id',
+	secret: sessionSecretArray,
+	saveUninitialized: false,
+	resave: false,
+	rolling: false,
+	store: MongoStore.create({client: sessionStoreClient, dbName: process.env.DBNAME}),
+	cookie: {httpOnly: true, secure: hasHttps, sameSite: "strict", maxAge: 6.048e8} // check default values when you have time
+})
+
 
 export function setCorsHeaders(req: Request, res: Response, next: ()=>any):void {
-	res.set("Access-Control-Allow-Origin", "http://localhost:5178")
+	res.set("Access-Control-Allow-Origin", process.env.ALLOWED_ORIGIN)
 	res.set("Access-Control-Allow-Headers", "Content-Type, X-local-name, X-file-hash, X-resume-upload")
 	res.set("Access-Control-Max-Age", "86400");	// 24 hours, should change later
 	res.set("Access-Control-Allow-Credentials", "true");
@@ -24,7 +44,7 @@ export async function authenticateUser(req: Request, res: Response, next: ()=>vo
 		return;
 	}
 
-	const user = await dbClient.getUserWithId(req.cookies.userId)
+	const user = await dbClient.getUserWithId(req.session.userId) // learn declarative merging later to fix this ts bug
 	if (user){
 		next()
 	}else {

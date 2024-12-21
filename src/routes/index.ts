@@ -10,7 +10,7 @@ const router = Router()
 // todo: test queries that have parameters without the parameters
 router.post("/login", loginHandler);
 router.post("/signup", signupHandler)
-router.post("/auth-user-details", authHandler)
+router.get("/auth-user-details", authHandler)
 router.post("/:folderUri/upload-file", fileUploadHandler);
 router.get("/fileDetail/:fileHash", fileReqByHashHandler)
 router.get("/:folderUri/files-data", filesRequestHandler)

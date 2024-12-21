@@ -5,6 +5,19 @@ import { generateUrlSlug } from "./utilities"
 import dbClient, { type FileData } from "../db/client"
 import { ObjectId } from "mongodb"
 
+/*\
+todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
+password encryption, better uri generations?, auth middleware?, read up on time in js and mongodb
+Query only the required fields. Stop querying all fields, encrypt and decrypt all userIds as needed
+Add serious logging => response type, db errors, server errors e.t.c.
+Add types to evrything!
+enforce password patterns on the frontend
+Install enviroment variables
+use it to store details and distinguish between prod and dev mode
+implement all encryption and decryption such as pasword hashing, csrf tokens, sessionId e.t.c
+prevent usage of stolen auth cookies
+*/
+
 
 // todo: implement the encryption algorithm
 function encrypt(plainText: string) {
@@ -56,8 +69,11 @@ export async function loginHandler(req: Request, res: Response) {
 	const user = await dbClient.loginUser(req.body);
 	if (user) {
 		// TODO: change and encrypt credentials
-		res.cookie('userId', encrypt(user._id as string), {httpOnly: true, secure: true, sameSite: "strict", maxAge: 6.04e8}) // 7 days
-		return res.status(200).json({msg: "success", loggedInUserName: user.email})
+		req.session.userId=user._id
+		console.log("ZE FUCK?", req.session)
+		// req.session.regenerate(()=>)
+		// req.session.touch()
+		return res.status(200).json({msg: "success", loggedInUserName: user.username})
 	}else return res.status(401).json({error: "Invalid login details!"});
 }
 
@@ -67,6 +83,7 @@ export async function signupHandler(req: Request, res: Response) {
 	}
 	const status = await dbClient.createNewUser(req.body);
 	if (status === "success") {
+		await loginHandler(req, res)
 		return res.status(201).json({msg: "success"})
 	}else return res.status(500).json({msg: "Internal Server Error"});
 }
@@ -119,7 +136,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			console.log("CLIENT ABORTED")
 			const lengthOfRecvdData = uploadTracker.sizeUploaded;
 			uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
-			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.cookies.userId, lengthOfRecvdData)
+			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.session.userId, lengthOfRecvdData)
 			if (!result.acknowledged) {
 				// do something .... but what?
 			}
@@ -130,7 +147,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		console.log("CLIENT DIDN'T ABORT")
 		const lengthOfRecvdData = uploadTracker.sizeUploaded;
 		uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
-		const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.cookies.userId, lengthOfRecvdData)
+		const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.session.userId, lengthOfRecvdData)
 		if (!result.acknowledged) {
 			// do something .... but what?
 		}
@@ -148,7 +165,7 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
 		return;
 	}
 	const responseData = await dbClient.getFileByHash(
-		decrypt(req.cookies.userId), decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string
+		req.session.userId, decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string
 		)
 	if (!responseData){
 		res.status(400).json({msg: "BAD REQUEST!"})
@@ -158,12 +175,13 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
 }
 
 export async function filesRequestHandler(req: Request, res: Response) {
-	const responseData = await dbClient.getFilesData(decrypt(req.cookies.userId), req.params.folderUri)
+	const responseData = await dbClient.getFilesData(req.session.userId, req.params.folderUri)
 	res.status(200).json({data: responseData.data})
 }
 
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
-	const user = await dbClient.getUserWithId(req.cookies.userId)
+	console.log(req.session)
+	const user = await dbClient.getUserWithId(req.session.userId)
 	if (user) {
 		res.status(200).json(user)
 	}else {
@@ -210,11 +228,6 @@ function getFolderMetaData(req: Request) {
 
 }
 
-// todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
-// password encryption, better uri generations?, auth middelware?, read up on time in js and mongodb
-// Query only the required fields. Stop querying all fields, encrypt and decrypt all userIds as needed
-// Add serious logging => response type, db errors, server errors e.t.c.
-// Add types to evrything!
 export async function createFolderReqHandler(req: Request, res: Response) {
 	const payLoad = getFolderMetaData(req);
 
@@ -230,7 +243,7 @@ export async function createFolderReqHandler(req: Request, res: Response) {
 
 
 export async function userUploadHistoryReqHandler(req: Request, res: Response) {
-	const userUploadHistory = await dbClient.getUserUploadHistory(req.cookies.userId) // decrypt first when the feature is implemented
+	const userUploadHistory = await dbClient.getUserUploadHistory(req.session.userId) // decrypt first when the feature is implemented
 	if (!userUploadHistory) {
 		res.status(500).json({errorMsg: "Internal db error"})
 	}else {
@@ -240,7 +253,7 @@ export async function userUploadHistoryReqHandler(req: Request, res: Response) {
 }
 
 export async function fileDelReqHandler(req: Request, res: Response) {
-	const results = await dbClient.deleteFile(req.cookies.userId, req.params.fileUri)
+	const results = await dbClient.deleteFile(req.session.userId, req.params.fileUri)
 	if (results.acknowledged) {
 		res.status(200).json({msg: "File deleted successfully"})
 	}else {
@@ -249,7 +262,7 @@ export async function fileDelReqHandler(req: Request, res: Response) {
 }
 
 export async function newFavFileReqHandler(req: Request, res: Response) {
-	const result = await dbClient.addFileToFavourites(req.cookies.userId, req.params.ffileUri)
+	const result = await dbClient.addFileToFavourites(req.session.userId, req.params.ffileUri)
 	if (result.acknowledged){
 		res.status(200).json({msg: "File added to favourites"})
 	}else {
@@ -264,7 +277,7 @@ export async function fileRenameHandler(req: Request, res: Response) {
 		return;
 	}
 
-	const results = await dbClient.renameFile(req.cookies.userId, req.params.fileUri, req.body.newName)
+	const results = await dbClient.renameFile(req.session.userId, req.params.fileUri, req.body.newName)
 	console.log(results)
 	if (results.acknowledged) {
 		res.status(200).json({msg: "File Renamed successfully"})
