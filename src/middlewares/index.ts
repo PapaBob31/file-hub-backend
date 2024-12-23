@@ -2,6 +2,7 @@ import {Response, Request} from "express";
 import dbClient, { sessionStoreClient } from "../db/client"
 import session from "express-session"
 import MongoStore from "connect-mongo"
+import Tokens from "csrf"
 
 
 const sessionSecretArray = JSON.parse(process.env.SESSION_SECRET as string) as string[]
@@ -15,7 +16,7 @@ export const loginSession = session({
 	secret: sessionSecretArray,
 	saveUninitialized: false,
 	resave: false,
-	rolling: false,
+	rolling: true,
 	store: MongoStore.create({client: sessionStoreClient, dbName: process.env.DBNAME}),
 	cookie: {httpOnly: true, secure: hasHttps, sameSite: "strict", maxAge: 6.048e8} // check default values when you have time
 })
@@ -23,7 +24,7 @@ export const loginSession = session({
 
 export function setCorsHeaders(req: Request, res: Response, next: ()=>any):void {
 	res.set("Access-Control-Allow-Origin", process.env.ALLOWED_ORIGIN)
-	res.set("Access-Control-Allow-Headers", "Content-Type, X-local-name, X-file-hash, X-resume-upload")
+	res.set("Access-Control-Allow-Headers", "Content-Type, X-local-name, X-file-hash, X-resume-upload, X-file-vault-csrf-token")
 	res.set("Access-Control-Max-Age", "86400");	// 24 hours, should change later
 	res.set("Access-Control-Allow-Credentials", "true");
 	res.set("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
@@ -49,5 +50,19 @@ export async function authenticateUser(req: Request, res: Response, next: ()=>vo
 		next()
 	}else {
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"});
+	}
+}
+
+export async function checkForCSRF(req: Request, res: Response, next: ()=>void) {
+	const excludedEndpoints = ["/login", "/signup", "/auth-user-details"];
+	const tokens = new Tokens()
+
+	if (excludedEndpoints.includes(req.originalUrl) || req.method === "GET") {
+		next()
+	}else if (!tokens.verify(req.session.csrfSecret, req.headers["x-file-vault-csrf-token"] as string)) {
+		res.status(400).json({msg: "Invalid request!"})
+		req.destroy()
+	}else {
+		next()
 	}
 }
