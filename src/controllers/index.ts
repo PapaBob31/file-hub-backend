@@ -3,10 +3,9 @@ import fs from "fs";
 // import path from "node:path";
 import { generateUrlSlug } from "./utilities"
 import dbClient, { type FileData } from "../db/client"
+import escapeHtml from "escape-html"
 import { ObjectId } from "mongodb"
-import crypto from "node:crypto"
-import  { Buffer } from "node:buffer"
-// import  { pipeline } from "node:stream"
+import Tokens from "csrf"
 
 /*\
 todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
@@ -23,10 +22,17 @@ escape html from any form of user input that will be displayed later
 handle bogus http requests, i.e 404 everyhing that ought to have a payload but doesn't ans much more
 filepath issues such as file path max name length; max file size, path traversing exploits, e.t.c
 
+LOGOUT
+
+How does exppress work internally? Should I use threads?
+
 send a file request and abort while the page reloads to see how express reacts
 
 test endpoints that have parameters without the parameters preferrably using postman
 
+check if it's safe to perform side effects with GET requests
+
+BULL?
 */
 
 
@@ -79,10 +85,9 @@ export async function loginHandler(req: Request, res: Response) {
 	}
 	const user = await dbClient.loginUser(req.body);
 	if (user) {
-		// TODO: change and encrypt credentials
-		req.session.userId=user._id
-		// req.session.regenerate(()=>)
-		// req.session.touch()
+		const tokens = new Tokens()
+		req.session.userId = user._id
+		req.session.csrfSecret = tokens.secretSync()
 		return res.status(200).json({msg: "success", loggedInUserName: user.username})
 	}else return res.status(401).json({error: "Invalid login details!"});
 }
@@ -122,7 +127,6 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			req.destroy()
 			return 
 		}
-		// uploadTracker.sizeUploaded = uploadedData.sizeUploaded
 	}else {
 		metaData = generateMetaData(req)
 		uploadedData = await dbClient.storeFileDetails(metaData);
@@ -143,14 +147,20 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	})
 
 	req.on('close', async () => {
+		const lengthOfRecvdData = uploadTracker.sizeUploaded;
+		uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
+
 		if (req.complete) {
 			console.log("CLIENT DIDN'T ABORT")
-			uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
-			res.status(200).send(JSON.stringify(uploadedData))
+			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.session.userId, lengthOfRecvdData)
+	
+			if (result.acknowledged) {
+				uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
+				res.status(200).send(JSON.stringify(uploadedData))
+			}else
+				res.status(500).send("OMO")
 		}else {
 			console.log("CLIENT ABORTED")
-			const lengthOfRecvdData = uploadTracker.sizeUploaded;
-			uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
 			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.session.userId, lengthOfRecvdData)
 			if (!result.acknowledged) {
 				// do something .... but what?
@@ -178,7 +188,7 @@ export async function uploadDelFromHistoryHandler(req: Request, res: Response) {
 	if (results.acknowledged)
 		res.status(200).json({msg: "File has been removed from upload history"})
 	else
-		res.status(400).json()
+		res.status(400).json({msg: "Invalid request!"}) // todo: add proper status code instead of generalizing everything as a 400
 }
 
 export async function fileReqByHashHandler(req: Request, res: Response) {
@@ -204,7 +214,8 @@ export async function filesRequestHandler(req: Request, res: Response) {
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
 	const user = await dbClient.getUserWithId(req.session.userId)
 	if (user) {
-		res.status(200).json(user)
+		const tokens = new Tokens()
+		res.status(200).json({...user, csrfToken: tokens.create(req.session.csrfSecret)})
 	}else {
 		res.status(401).json("Invalid Request! Unauthenticated User!")
 	}
@@ -224,6 +235,7 @@ export async function singleFileReqHandler(req: Request, res: Response) {
 	if (!fs.existsSync(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)) {
 		res.status(404).send("Image not found")
 	}
+	console.log(req.range(fileDetails.size))
 	res.status(200).sendFile(fileDetails.pathName, {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads`}, function(err) {
 		if (err) {
 			// console.log(err)
