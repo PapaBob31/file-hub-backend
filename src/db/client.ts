@@ -158,8 +158,13 @@ class SyncedReqClient {
 
 	async deleteFromHistory(fileUri: string, userId: string) {
 		const uploadedFiles = await this.#dataBase.collection<FileData>("uploaded_files")
+		let queryResults;
 		try {
-			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {inHistory: false}})
+			const fileDetails = await uploadedFiles.findOne({userId: new ObjectId(userId), uri: fileUri})
+			if (fileDetails && (fileDetails.deleted || fileDetails.size !== fileDetails.sizeUploaded))
+				queryResults = await uploadedFiles.deleteOne({userId: new ObjectId(userId), uri: fileUri})
+			else
+				queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {inHistory: false}})
 			if (!queryResults) //  or updatedCount === 0?
 				throw new Error("File doesn't exist")
 			return queryResults;
