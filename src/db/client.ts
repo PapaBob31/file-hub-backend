@@ -1,6 +1,7 @@
 import { MongoClient, ObjectId, type UpdateResult } from "mongodb";
 import { generateUrlSlug } from "../controllers/utilities"
 import { scryptSync, randomBytes } from "node:crypto"
+import fsPromises from "fs/promises"
 
 
 export interface FileData {
@@ -68,7 +69,7 @@ class SyncedReqClient {
 		let data: null|FileData = null;
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files");
-			data = await fileDetails.findOne({uri});
+			data = await fileDetails.findOne({uri, $expr: {$eq: ["$size", "$sizeUploaded"]}});
 		}catch(error) {
 			data = null
 			console.log(error);
@@ -81,7 +82,6 @@ class SyncedReqClient {
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
 			const results = await fileDetails.insertOne(newFileDoc)
-			console.log(results)
 			insertedDoc._id = results.insertedId;
 		} catch(error) {
 			insertedDoc = null
@@ -129,7 +129,7 @@ class SyncedReqClient {
 
 			// todo: Change this to Promise.all or something and filter out the files with complete uploads first
 			const fileCursorObj = await fileDetails.find(
-				{userId: new ObjectId(userId), parentFolderUri: folderUri, $expr: {size: "$sizeUploaded"}, deleted: false});
+				{userId: new ObjectId(userId), parentFolderUri: folderUri, $expr: {$eq: ["$size", "$sizeUploaded"]}, deleted: false});
 			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
 			// try and limit the result somehow to manage memory
 			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
@@ -145,16 +145,72 @@ class SyncedReqClient {
 	}
 
 	async getFileByHash(userId: string, hash: string, name: string) {
-		console.log(userId, hash, name)
 		let fileData:FileData|null = null;
 		try {
 			const fileDetails = await this.#dataBase.collection("uploaded_files")
 			fileData = await fileDetails.findOne<FileData>({userId: new ObjectId(userId), hash, name})
-			console.log("DEBUG!", fileData);
+			// console.log("DEBUG!", fileData);
 		}catch(err) {
 			console.log(err);
 		}
 		return fileData;
+	}
+
+	async deleteFromHistory(fileUri: string, userId: string) {
+		const uploadedFiles = await this.#dataBase.collection<FileData>("uploaded_files")
+		try {
+			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {inHistory: false}})
+			if (!queryResults) //  or updatedCount === 0?
+				throw new Error("File doesn't exist")
+			return queryResults;
+		}catch(err) {
+			console.log(err)
+			return {acknowledged: false, modifiedCount: 0};
+		}
+	}
+
+	async deleteFile(userId: string, fileUri: string)  {
+		const uploadedFiles = await this.#dataBase.collection<FileData>("uploaded_files")
+		let queryResults;
+		try {
+			const fileDetails = await uploadedFiles.findOne({userId: new ObjectId(userId), uri: fileUri})
+			if (fileDetails && !fileDetails.inHistory)
+				queryResults = await uploadedFiles.deleteOne({userId: new ObjectId(userId), uri: fileUri})
+			else
+				queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {deleted: true}})
+			if (!fileDetails || !queryResults)
+				throw new Error("File doesn't exist")
+			const userStorageUpdated = await this.updateUsedUserStorage(userId, -fileDetails.size)
+			if (!userStorageUpdated)
+				throw new Error("File doesn't exist")
+			await fsPromises.unlink(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)
+			return queryResults;
+		}catch(err) {
+			console.log(err)
+			return {acknowledged: false, modifiedCount: 0};
+		}
+	}
+
+	async renameFile(userId: string, fileUri: string, newName: string) {
+		const uploadedFiles = await this.#dataBase.collection("uploaded_files");
+		try {
+			const queryResults = uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {name: newName}})
+			return queryResults;
+		}catch(err) {
+			console.log(err)
+			return {acknowledged: false, modifiedCount: 0}
+		}
+	}
+
+	async addFileToFavourites(userId: string, fileUri: string) {
+		const uploadedFiles = await this.#dataBase.collection<File>("uploaded_files");
+		try {
+			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {favourite: true}})
+			return queryResults;
+		}catch(err) {
+			console.log(err);
+			return {acknowledged: false, modifiedCount: 0}
+		}
 	}
 
 	async createNewUser(userData: User) {
@@ -258,46 +314,6 @@ class SyncedReqClient {
 		}
 
 		return results;
-	}
-
-	async deleteFile(userId: string, fileUri: string)  {
-		const uploadedFiles = await this.#dataBase.collection<File>("uploaded_files")
-		try {
-			const fileDetails = await uploadedFiles.findOne({userId: new ObjectId(userId), uri: fileUri})
-			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {deleted: true}})
-			if (!fileDetails || !queryResults)
-				throw new Error("File doesn't exist")
-			const userStorageUpdated = await this.updateUsedUserStorage(userId, -fileDetails.size)
-			if (!userStorageUpdated)
-				throw new Error("File doesn't exist")
-			// delete from disk too
-			return queryResults;
-		}catch(err) {
-			console.log(err)
-			return {acknowledged: false, modifiedCount: 0};
-		}
-	}
-
-	async renameFile(userId: string, fileUri: string, newName: string) {
-		const uploadedFiles = await this.#dataBase.collection("uploaded_files");
-		try {
-			const queryResults = uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {name: newName}})
-			return queryResults;
-		}catch(err) {
-			console.log(err)
-			return {acknowledged: false, modifiedCount: 0}
-		}
-	}
-
-	async addFileToFavourites(userId: string, fileUri: string) {
-		const uploadedFiles = await this.#dataBase.collection<File>("uploaded_files");
-		try {
-			const queryResults = await uploadedFiles.updateOne({userId: new ObjectId(userId), uri: fileUri}, {$set: {favourite: true}})
-			return queryResults;
-		}catch(err) {
-			console.log(err);
-			return {acknowledged: false, modifiedCount: 0}
-		}
 	}
 }
 

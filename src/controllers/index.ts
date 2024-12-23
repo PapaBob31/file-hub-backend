@@ -4,6 +4,9 @@ import fs from "fs";
 import { generateUrlSlug } from "./utilities"
 import dbClient, { type FileData } from "../db/client"
 import { ObjectId } from "mongodb"
+import crypto from "node:crypto"
+import  { Buffer } from "node:buffer"
+// import  { pipeline } from "node:stream"
 
 /*\
 todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
@@ -16,6 +19,14 @@ Install enviroment variables
 use it to store details and distinguish between prod and dev mode
 implement all encryption and decryption such as pasword hashing, csrf tokens, sessionId e.t.c
 prevent usage of stolen auth cookies
+escape html from any form of user input that will be displayed later
+handle bogus http requests, i.e 404 everyhing that ought to have a payload but doesn't ans much more
+filepath issues such as file path max name length; max file size, path traversing exploits, e.t.c
+
+send a file request and abort while the page reloads to see how express reacts
+
+test endpoints that have parameters without the parameters preferrably using postman
+
 */
 
 
@@ -43,7 +54,7 @@ function generateMetaData(request: Request):FileData {
 		type: request.headers["content-type"] as string,
 		size: parseInt(request.headers["content-length"] as string),
 		hash: request.headers["x-file-hash"] as string,
-		userId: new ObjectId(decrypt(request.cookies.userId)),
+		userId: new ObjectId(request.session.userId),
 		sizeUploaded: 0,
 		uri: generateUrlSlug(),
 		timeUploaded: (new Date()).toISOString(),
@@ -70,7 +81,6 @@ export async function loginHandler(req: Request, res: Response) {
 	if (user) {
 		// TODO: change and encrypt credentials
 		req.session.userId=user._id
-		console.log("ZE FUCK?", req.session)
 		// req.session.regenerate(()=>)
 		// req.session.touch()
 		return res.status(200).json({msg: "success", loggedInUserName: user.username})
@@ -106,9 +116,10 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		return;
 	}
 	if (req.headers["x-resume-upload"] === "true") {
-		uploadedData = await dbClient.getFileByHash(req.cookies.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string,)
+		uploadedData = await dbClient.getFileByHash(req.session.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string,)
 		if (!uploadedData) {
 			res.status(400).json({msg: "File to be updated doesn't exist!"})
+			req.destroy()
 			return 
 		}
 		// uploadTracker.sizeUploaded = uploadedData.sizeUploaded
@@ -132,7 +143,11 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	})
 
 	req.on('close', async () => {
-		if (!req.complete) {
+		if (req.complete) {
+			console.log("CLIENT DIDN'T ABORT")
+			uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
+			res.status(200).send(JSON.stringify(uploadedData))
+		}else {
 			console.log("CLIENT ABORTED")
 			const lengthOfRecvdData = uploadTracker.sizeUploaded;
 			uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
@@ -143,7 +158,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		}
 	})
 
-	req.on('end', async ()=>{
+	/*req.on('end', async ()=>{
 		console.log("CLIENT DIDN'T ABORT")
 		const lengthOfRecvdData = uploadTracker.sizeUploaded;
 		uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
@@ -153,10 +168,17 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		}
 		if (req.complete) {
 			uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
-			console.log(uploadedData)
 			res.status(200).send(JSON.stringify(uploadedData))
 		}
-	})
+	})*/
+}
+
+export async function uploadDelFromHistoryHandler(req: Request, res: Response) {
+	const results = await dbClient.deleteFromHistory(req.params.fileUri, req.session.userId)
+	if (results.acknowledged)
+		res.status(200).json({msg: "File has been removed from upload history"})
+	else
+		res.status(400).json()
 }
 
 export async function fileReqByHashHandler(req: Request, res: Response) {
@@ -180,7 +202,6 @@ export async function filesRequestHandler(req: Request, res: Response) {
 }
 
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
-	console.log(req.session)
 	const user = await dbClient.getUserWithId(req.session.userId)
 	if (user) {
 		res.status(200).json(user)
@@ -205,7 +226,8 @@ export async function singleFileReqHandler(req: Request, res: Response) {
 	}
 	res.status(200).sendFile(fileDetails.pathName, {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads`}, function(err) {
 		if (err) {
-			console.log(err, '45')
+			// console.log(err)
+			console.log("\nAn Error occured while trying to send", fileDetails.pathName, '\n')
 		}else {
 			console.log("Sent:", fileDetails.pathName)
 		}
@@ -219,7 +241,7 @@ function getFolderMetaData(req: Request) {
 	return {
 		name: req.body.name,
 		parentFolderUri: req.body.parentFolderUri,
-		userId: new ObjectId(req.cookies.userId),
+		userId: new ObjectId(req.session.userId),
 		uri: generateUrlSlug(),
 		type: "folder",
 		timeCreated: (new Date()).toISOString(),
@@ -243,7 +265,7 @@ export async function createFolderReqHandler(req: Request, res: Response) {
 
 
 export async function userUploadHistoryReqHandler(req: Request, res: Response) {
-	const userUploadHistory = await dbClient.getUserUploadHistory(req.session.userId) // decrypt first when the feature is implemented
+	const userUploadHistory = await dbClient.getUserUploadHistory(req.session.userId)
 	if (!userUploadHistory) {
 		res.status(500).json({errorMsg: "Internal db error"})
 	}else {
@@ -278,7 +300,6 @@ export async function fileRenameHandler(req: Request, res: Response) {
 	}
 
 	const results = await dbClient.renameFile(req.session.userId, req.params.fileUri, req.body.newName)
-	console.log(results)
 	if (results.acknowledged) {
 		res.status(200).json({msg: "File Renamed successfully"})
 	}else {
