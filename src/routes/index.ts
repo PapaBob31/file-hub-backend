@@ -2,12 +2,11 @@ import { Router } from "express";
 import {
 	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler,
 	filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler,
-	newFavFileReqHandler, fileRenameHandler
+	newFavFileReqHandler, fileRenameHandler, uploadDelFromHistoryHandler
 } from "../controllers";
 
 const router = Router()
 
-// todo: test queries that have parameters without the parameters
 router.post("/login", loginHandler);
 router.post("/signup", signupHandler)
 router.get("/auth-user-details", authHandler)
@@ -20,5 +19,6 @@ router.get("/upload-history", userUploadHistoryReqHandler)
 router.get("/delete-file/:fileUri", fileDelReqHandler)
 router.get("/add-to-favourites/:fileUri", newFavFileReqHandler)
 router.post("/rename-file/:fileUri", fileRenameHandler)
+router.post("/remove-from-history/:fileUri", uploadDelFromHistoryHandler)
 
 export default router;
