@@ -2,12 +2,14 @@ import { type Request, type Response } from "express";
 import fs from "fs";
 // import path from "node:path";
 import { generateUrlSlug } from "./utilities"
-import dbClient, { type FileData } from "../db/client"
-import escapeHtml from "escape-html"
+import dbClient, { type FileData, type User } from "../db/client"
+// import escapeHtml from "escape-html"
 import { ObjectId } from "mongodb"
+import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from "node:crypto"
+import { pipeline } from "node:stream"
 import Tokens from "csrf"
 
-/*\
+/*
 todo: Standardize the format of all your responses, Change every hardcoded variable to environment variable
 password encryption, better uri generations?, auth middleware?, read up on time in js and mongodb
 Query only the required fields. Stop querying all fields, encrypt and decrypt all userIds as needed
@@ -69,6 +71,7 @@ function generateMetaData(request: Request):FileData {
 		inHistory: true,
 		deleted: false,
 		favourite: false,
+		iv: ""
 	}
 }
 
@@ -120,8 +123,10 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		res.status(400).json({msg: "Invalid headers!"})
 		return;
 	}
+
+	const user = await dbClient.getUserWithId(req.session.userId)
 	if (req.headers["x-resume-upload"] === "true") {
-		uploadedData = await dbClient.getFileByHash(req.session.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string,)
+		uploadedData = await dbClient.getFileByHash(req.session.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string)
 		if (!uploadedData) {
 			res.status(400).json({msg: "File to be updated doesn't exist!"})
 			req.destroy()
@@ -132,21 +137,44 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		uploadedData = await dbClient.storeFileDetails(metaData);
 	}
 
-	if (!uploadedData) {
+	if (!uploadedData || !user) {
 		res.status(400).json({msg: "Invalid request!"});
 		return;
 	}
 	uploadTracker.fileId = uploadedData._id as string;
 
-	req.on('data', (chunk)=>{
-		const filePathName = (uploadedData as FileData).pathName
-		if (!fs.existsSync("../uploads/"+filePathName)) {
-			writeToFile("../uploads/"+filePathName, chunk, 'w');
-		}else writeToFile("../uploads/"+filePathName, chunk, 'a');
-		uploadTracker.sizeUploaded += chunk.length;
-	})
+	const key = scryptSync(user.password, 'notRandomSalt', 24) 
+	const aesCipher = createCipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
+	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
 
-	req.on('close', async () => {
+	if (uploadedData.sizeUploaded !== 0) {
+		if (!fs.existsSync("../uploads/"+uploadedData.pathName)) { // this should be impossible; log that the file for the record wasn't found? delete the record?
+			res.status(400).json({msg: "Invalid request!"});
+			return
+		}
+		const fileStream = fs.createReadStream("../uploads/"+uploadedData.pathName) // if not fileStream??
+		pipeline(fileStream, aesDecipher, aesCipher, (err) => {
+			if (!err) {
+				writeToFile("../uploads/"+uploadedData!.pathName, "", 'w'); // clear the file
+				req.on('data', (chunk)=>{
+					writeToFile("../uploads/"+uploadedData!.pathName, aesCipher.update(chunk), 'a');
+					uploadTracker.sizeUploaded += chunk.length;
+				})
+			}else {
+				res.status(500).json({msg: "OMO"});
+				return;
+			}
+		})
+
+	}else {
+		writeToFile("../uploads/"+uploadedData!.pathName, "", 'w'); // clear the file
+		req.on('data', (chunk)=>{
+			writeToFile("../uploads/"+uploadedData!.pathName, aesCipher.update(chunk), 'a');
+			uploadTracker.sizeUploaded += chunk.length;
+		})
+	}
+
+	req.on('close', async () => { // can 'close' be emitted before the 'data' event is attached due to decrypting data when resuming file upload
 		const lengthOfRecvdData = uploadTracker.sizeUploaded;
 		uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
 
@@ -166,6 +194,12 @@ export async function fileUploadHandler(req: Request, res: Response) {
 				// do something .... but what?
 			}
 		}
+		writeToFile("../uploads/"+uploadedData!.pathName, aesCipher.final(), 'a');
+
+		/*const filePathName = (uploadedData as FileData).pathName
+		if (!fs.existsSync("../uploads/"+filePathName)) {
+			writeToFile("../uploads/"+filePathName, aesCipher.final(), 'w');
+		}else writeToFile("../uploads/"+filePathName, aesCipher.final(), 'a');*/
 	})
 
 	/*req.on('end', async ()=>{
@@ -234,16 +268,22 @@ export async function singleFileReqHandler(req: Request, res: Response) {
 	// todo: add proper path name and try and make every type of video supported on most browsers [start from firefox not supporting mkv]
 	if (!fs.existsSync(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)) {
 		res.status(404).send("Image not found")
+		return
 	}
-	console.log(req.range(fileDetails.size))
-	res.status(200).sendFile(fileDetails.pathName, {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads`}, function(err) {
+	const user = await dbClient.getUserWithId(req.session.userId) as User;
+	const key = scryptSync(user.password, 'notRandomSalt', 24) 
+	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
+	// console.log(req.range(fileDetails.size))
+	const fileStream = fs.createReadStream(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)
+	fileStream.pipe(aesDecipher).pipe(res)
+	/*res.status(200).sendFile(fileDetails.pathName, {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads`}, function(err) {
 		if (err) {
 			// console.log(err)
 			console.log("\nAn Error occured while trying to send", fileDetails.pathName, '\n')
 		}else {
 			console.log("Sent:", fileDetails.pathName)
 		}
-	})
+	})*/
 }
 
 function getFolderMetaData(req: Request) {

@@ -20,6 +20,7 @@ export interface FileData {
 	parentFolderUri: string|ObjectId;
 	inHistory: boolean;
 	deleted: boolean;
+	iv: string
 }
 
 export interface Folder {
