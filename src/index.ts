@@ -2,8 +2,8 @@
 // TODO: uninstall all unused packages
 import express from "express"
 import cookieParser from "cookie-parser";
-import {setCorsHeaders, logRequestDetails, authenticateUser, loginSession, checkForCSRF } from "./middlewares";
-import router from "./routes"
+import {setCorsHeaders, logRequestDetails, authenticateUser, loginSession, checkForCSRF } from "./middlewares/index.js";
+import router from "./routes/index.js"
 
 const app = express()
 const portNo = 7200;
