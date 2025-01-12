@@ -1,5 +1,5 @@
 import {Response, Request} from "express";
-import dbClient, { sessionStoreClient } from "../db/client"
+import dbClient, { sessionStoreClient } from "../db/client.js"
 import session from "express-session"
 import MongoStore from "connect-mongo"
 import Tokens from "csrf"

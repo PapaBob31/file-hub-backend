@@ -1,11 +1,12 @@
 import { type Request, type Response } from "express";
 import fs from "fs";
 // import path from "node:path";
-import { generateUrlSlug } from "./utilities"
-import dbClient, { type FileData, type User } from "../db/client"
+// import { generateUrlSlug } from "./utilities"
+import dbClient, { type FileData, type User, type Folder } from "../db/client.js"
 // import escapeHtml from "escape-html"
 import { ObjectId } from "mongodb"
 import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from "node:crypto"
+import { nanoid } from "nanoid"
 import { pipeline } from "node:stream"
 import Tokens from "csrf"
 
@@ -20,9 +21,10 @@ Install enviroment variables
 use it to store details and distinguish between prod and dev mode
 implement all encryption and decryption such as pasword hashing, csrf tokens, sessionId e.t.c
 prevent usage of stolen auth cookies
-escape html from any form of user input that will be displayed later
+escape html from any form of user input that will be displayed later; usernames are case insensitive
 handle bogus http requests, i.e 404 everyhing that ought to have a payload but doesn't ans much more
 filepath issues such as file path max name length; max file size, path traversing exploits, e.t.c
+what happens if I set invalid response code i.e 4000 instead of 400
 
 LOGOUT
 
@@ -37,25 +39,19 @@ check if it's safe to perform side effects with GET requests
 BULL?
 */
 
+/* file sharing implementation
+1. make a file or folder publicly accessible to anybody
+2. every user should have a unique shareId
 
-// todo: implement the encryption algorithm
-function encrypt(plainText: string) {
-	let cipherText = plainText;
-	return cipherText
-}
+*/
 
-// todo: implement the decryption algorithm
-function decrypt(cipherText: string) {
-	let plainText = cipherText;
-	return plainText;
-}
 
-// todo: implement proper pathname
+// todo: implement proper pathname and make sure we can't override existing file
 function generateUniqueFileName(request: Request) {
-	return request.headers["x-local-name"] + ".UFILE";
+	return request.headers["x-local-name"] + nanoid() + ".UFILE";
 }
 
-function generateMetaData(request: Request):FileData {
+function generateMetaData(request: Request, parentFolder: Folder):FileData {
 	return  {
 		name: request.headers["x-local-name"] as string,
 		pathName: generateUniqueFileName(request), // escape the names or something incase of path traversing file names if that's even a thing
@@ -64,7 +60,7 @@ function generateMetaData(request: Request):FileData {
 		hash: request.headers["x-file-hash"] as string,
 		userId: new ObjectId(request.session.userId),
 		sizeUploaded: 0,
-		uri: generateUrlSlug(),
+		uri: nanoid(),
 		timeUploaded: (new Date()).toISOString(),
 		lastModified: (new Date()).toISOString(),
 		parentFolderUri: request.params.folderUri,
@@ -100,9 +96,9 @@ export async function signupHandler(req: Request, res: Response) {
 		return res.status(400).json({msg: "Invalid request body"});
 	}
 	const status = await dbClient.createNewUser(req.body);
+	console.log(status);
 	if (status === "success") {
 		await loginHandler(req, res)
-		return res.status(201).json({msg: "success"})
 	}else return res.status(500).json({msg: "Internal Server Error"});
 }
 
@@ -124,6 +120,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		return;
 	}
 
+
 	const user = await dbClient.getUserWithId(req.session.userId)
 	if (req.headers["x-resume-upload"] === "true") {
 		uploadedData = await dbClient.getFileByHash(req.session.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string)
@@ -133,7 +130,12 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			return 
 		}
 	}else {
-		metaData = generateMetaData(req)
+		const parentFolder = await dbClient.getFolderDetails(req.params.folderUri, req.session.userId)
+		if (!parentFolder){
+			res.status(400).json({msg: "Invalid request!"});
+			return;
+		}
+		metaData = generateMetaData(req, parentFolder)
 		uploadedData = await dbClient.storeFileDetails(metaData);
 	}
 
@@ -255,27 +257,35 @@ export async function authHandler(req: Request, res: Response) { // yep. turn it
 	}
 }
 
-export async function singleFileReqHandler(req: Request, res: Response) {
-	const fileDetails = await dbClient.getFileDetails(req.params.fileUri);
+async function getFileStream(fileUri: string, userId: string) {
+	const fileDetails = await dbClient.getFileDetails(fileUri, userId);
 	if (!fileDetails){
-		res.status(404).send("File not found");
-		return;
+		return {status: 404, msg: "File not found", fileStream: null, aesDecipher: null};
 	}
 	if (!fileDetails.type.startsWith("image/") && !fileDetails.type.startsWith("video/")) {
-		res.status(400).send("Bad Request") // serves requests for only files that can be displayed in the browse
-		return;
+		return {status: 400, msg: "Bad Request", fileStream: null, aesDecipher: null};
 	}
 	// todo: add proper path name and try and make every type of video supported on most browsers [start from firefox not supporting mkv]
 	if (!fs.existsSync(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)) {
-		res.status(404).send("Image not found")
-		return
+		return {status: 404, msg: "File not found", fileStream: null, aesDecipher: null};
 	}
-	const user = await dbClient.getUserWithId(req.session.userId) as User;
+	const user = await dbClient.getUserWithId(userId) as User;
 	const key = scryptSync(user.password, 'notRandomSalt', 24) 
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
-	// console.log(req.range(fileDetails.size))
+	// what if i doesn't return a file stream?
 	const fileStream = fs.createReadStream(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)
-	fileStream.pipe(aesDecipher).pipe(res)
+	return {status: null, msg: null, fileStream, aesDecipher};
+}
+
+export async function singleFileReqHandler(req: Request, res: Response) {
+	const {fileStream, status, msg, aesDecipher} = await getFileStream(req.params.fileUri, req.session.userId)
+	if (!fileStream)
+		res.status(status).send(msg);
+
+	if (fileStream && aesDecipher)
+		fileStream.pipe(aesDecipher).pipe(res)
+	else 
+		res.status(500).send("Something went wrong but it's not your fault")
 	/*res.status(200).sendFile(fileDetails.pathName, {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads`}, function(err) {
 		if (err) {
 			// console.log(err)
@@ -286,7 +296,7 @@ export async function singleFileReqHandler(req: Request, res: Response) {
 	})*/
 }
 
-function getFolderMetaData(req: Request) {
+function getFolderMetaData(req: Request, parentFolder: Folder): Folder|null {
 	if (!req.body.name || !req.body.parentFolderUri) {
 		return null
 	}
@@ -294,16 +304,22 @@ function getFolderMetaData(req: Request) {
 		name: req.body.name,
 		parentFolderUri: req.body.parentFolderUri,
 		userId: new ObjectId(req.session.userId),
-		uri: generateUrlSlug(),
+		uri: nanoid(),
 		type: "folder",
 		timeCreated: (new Date()).toISOString(),
+		lastModified: (new Date()).toISOString(),
 		isRoot: false,
 	}
 
 }
 
 export async function createFolderReqHandler(req: Request, res: Response) {
-	const payLoad = getFolderMetaData(req);
+	const parentFolder = await dbClient.getFolderDetails(req.body.parentFolderUri, req.session.userId)
+	if (!parentFolder){
+		res.status(400).json({msg: "Invalid request!"});
+		return;
+	}
+	const payLoad = getFolderMetaData(req, parentFolder);
 
 	if (payLoad){
 		const result = await dbClient.createNewFolderEntry(payLoad);
@@ -356,5 +372,270 @@ export async function fileRenameHandler(req: Request, res: Response) {
 		res.status(200).json({msg: "File Renamed successfully"})
 	}else {
 		res.status(404).json({msg: "Target resource was not found"}) // or should it be 403?
+	}
+}
+
+export async function accessGrantReqHandler(req: Request, res: Response) {
+	const { grantees, resourcesData } = req.body
+	if (!grantees || !resourcesData) {
+		res.status(400).json({errorMsg: "Invalid request body"})
+	}else {
+		const data = {grantees, resourcesData}
+		const queryResult = await dbClient.grantResourcesPermission(data, req.session.userId)
+		if (queryResult.status === 200)
+			res.status(queryResult.status).json({errorMsg: queryResult.msg, msg: null, data: null})
+		res.status(queryResult.status).json({msg: queryResult.msg})
+	}	
+}
+
+export async function revokeSharedAccessReqHandler(req: Request, res: Response) {
+	if (!req.body.revokedFilesUris || req.body.grantee) {
+		res.status(400).json({msg: null, errorMsg: "Bad Request!", data: null})
+	}else {
+		const querySuccessful = await dbClient.deleteSharedFileEntry(req.body.revokedFilesUris, req.body.grantee, req.session.userId)
+		if (querySuccessful){
+			res.status(200).json({msg: "Files access revoked", data: null, errorMsg: null})
+		}else {
+			res.status(500).json({errrorMsg: "Something went wrong", data: null, errorMsg: null})
+		}
+	}
+}
+
+export async function sharedFileContentReqHandler(req: Request, res: Response) {
+	if (!req.query.type) {
+		res.status(400).json({errorMsg: "no 'type' parameter was specified!", data: null})
+		return
+	}
+
+	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId)
+	if (!resource) {
+		res.status(404).json({errorMsg: "File not found!", msg: null, data: null})
+		return;
+	}
+
+	let targetContentUri;
+
+	if (req.params.contentUri === resource.grantedResourceUri) {
+		targetContentUri = resource.grantedResourceUri;
+	}else {
+		const contentIsFolderChild = await dbClient.checkIfFileIsNestedInFolder(resource.grantedResourceUri, req.params.contentUri, req.query.type)
+		if (contentIsFolderChild) {
+			targetContentUri = contentIsFolderChild
+		}else {
+			res.status(404).json({errorMsg: "File not found!", msg: null, data: null});
+			return
+		}
+	}
+	
+	if (resource.excludedEntriesUris.includes(targetContentUri)) {
+		res.status(403).json({msg: "You don't have access to this resource"})
+		return;
+	}else if (req.query.type === "file"){
+		const {fileStream, status, msg, aesDecipher} = await getFileStream(targetContentUri, resource.grantorId as string)
+		if (!fileStream)
+			res.status(status).json({errorMsg: msg, msg: null, data:  null});
+
+		if (fileStream && aesDecipher)
+			fileStream.pipe(aesDecipher).pipe(res)
+		else 
+			res.status(500).json({errorMsg: "Something went wrong but it's not your fault", msg: null, data:  null})
+	}else if (req.query.type === "folder") {
+		const responseData = await dbClient.getSharedFolderData(targetContentUri, resource.excludedEntriesUris)
+		res.status(200).json({data: responseData})
+	}
+}
+
+export async function sharedFileMetaDataReqdHandler(req: Request, res: Response) {  // todo: readup on these express query parameters
+	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId)
+
+	if (!resource) {
+		res.status(404).json({errorMsg: "File not found!", msg: null, data: null})
+		return;
+	}
+
+	if (resource.resourceType === "file") {
+		const fileDetails = await dbClient.getFileDetails(resource.grantedResourceUri, resource.grantorId as string)
+		if (fileDetails)
+			res.status(200).json({data: [fileDetails],  msg: null, errorMsg: null})
+		else
+			res.status(500).json({errorMsg: "Something went wrong", data: null, msg: null})
+	}else {
+		const folderDetails = await dbClient.getFolderDetails(resource.grantedResourceUri, resource.grantorId as string)
+		if (folderDetails)
+			res.status(200).json({data: [folderDetails],  msg: null, errorMsg: null})
+		else
+			res.status(500).json({errorMsg: "Something went wrong", data: null, msg: null})
+
+	}
+}
+
+export async function UserSharedFilesDetailsReqHandler(req: Request, res: Response) {
+	const sharedFileLinks = await dbClient.getUserSharedFiles(req.session.userId)
+	if (sharedFileLinks) {
+		res.status(200).json({data: sharedFileLinks})
+	}else {
+		res.status(500).json({msg: "Internal Server Error"})
+	}
+}
+
+export async function moveFilesReqHandler(req: Request, res: Response) {
+	if (!req.body.movedFilesUris || req.body.movedFilesUris.length === 0) {
+		res.status(400).json({errorMsg: "No files to copy", data: null, })
+		return
+	}
+	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId)
+	if (!destinationFolder) {
+		res.status(400).json({errorMsg: "Bad Request! New Parent Folder doesn't exist", data: null, })
+		return
+	}
+	const contentToMoveDetails = await dbClient.getContentDataToCopy(req.body.movedFilesUris, req.session.userId);
+
+	let folders: Folder[], files: FileData[];
+	if (contentToMoveDetails.msg === "valid uris"){
+		folders = contentToMoveDetails.folders as Folder[]
+		files = contentToMoveDetails.files as FileData[]
+	}else if (contentToMoveDetails.msg === "invalid uris") {
+		res.status(400).json({msg: null, errorMsg: "Some of the files to be copied do not exist", data: contentToMoveDetails.invalidUris})
+		return
+	}else {
+		res.status(500).json({msg: null, errorMsg: "Internal Server Error", data: null})
+		return
+	}
+	const querySuccessful = await dbClient.updateMovedFiles(folders.concat(files), destinationFolder)
+
+	if (querySuccessful) {
+		res.status(200).json({msg: "Files moved successfully!", data: null, errorMsg: null})
+	}else {
+		res.status(500).json({errorMsg: "Internal Server Error!", data: null, msg: null})
+	}
+}
+
+
+function copyFilesOnDisk(files: FileData[], newlyCopiedFiles: FileData[]) {
+	for (let i=0; i<files.length; i++) {
+		fs.copyFileSync(
+			`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${files[i].pathName}`, 
+			`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${newlyCopiedFiles[i].pathName}`
+		)
+	}
+}
+
+export async function copySharedFilesReqHandler(req: Request, res: Response) {
+	if (!req.body.copiedFilesUris || req.body.copiedFilesUris.length === 0) {
+		res.status(400).json({errorMsg: "No files to copy", data: null, })
+		return
+	}
+	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId)
+	const queryResponse = await dbClient.getSharedFilesToCopyGrantorId(req.body.copiedFilesUris, req.session.userId)
+	// const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId)
+
+	if (queryResponse.status !== 200) {
+		res.status(queryResponse.status).json(queryResponse.payload)
+		return;
+	}
+
+	const grantorId = queryResponse.payload
+
+	if (!destinationFolder) {
+		res.status(400).json({errorMsg: "Bad Request! New Parent Folder doesn't exist", data: null, })
+		return
+	}
+	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedFilesUris, grantorId);
+	let folders: Folder[], files: FileData[];
+	if (contentToCopyDetails.msg === "valid uris"){
+		folders = contentToCopyDetails.folders as Folder[]
+		files = contentToCopyDetails.files as FileData[]
+	}else if (contentToCopyDetails.msg === "invalid uris") {
+		res.status(400).json({msg: null, errorMsg: "Some of the files to be copied do not exist", data: contentToCopyDetails.invalidUris})
+		return
+	}else {
+		res.status(500).json({msg: null, errorMsg: "Internal Server Error", data: null})
+		return
+	}
+
+	let copiedFilesData: FileData[] = files.map((file) => {
+		return {...file, _id: new ObjectId(), userId: new ObjectId(req.session.userId), 
+		pathName: file.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
+	})
+	let copiedFolders: Folder[] = folders.map((folder) => {
+		return {...folder, _id: new ObjectId(), userId: new ObjectId(req.session.userId), 
+		pathName: folder.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
+	})
+	const user = await dbClient.getUserWithId(req.session.userId) as User
+	const querySuccessful = await dbClient.insertCopiedResources(copiedFilesData, copiedFolders, user)
+	if (querySuccessful) {
+		if (files.length > 0) {
+			// todo: probably put this in a try-catch block and reverse changes incase something goes wrong
+			copyFilesOnDisk(files, copiedFilesData)
+		}
+		res.status(200).json({msg: "successful!", errorMsg: null, data: null})
+	}else {
+		res.status(500).json({msg: "", errorMsg: "Internal Server Error. Not your fault though", data: null})
+	}
+}
+
+export async function copyFilesReqHandler(req: Request, res: Response) {
+	if (!req.body.copiedFilesUris || req.body.copiedFilesUris.length === 0) {
+		res.status(400).json({errorMsg: "No files to copy", data: null, })
+		return
+	}
+	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId)
+	if (!destinationFolder) {
+		res.status(400).json({errorMsg: "Bad Request! New Parent Folder doesn't exist", data: null, })
+		return
+	}
+	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedFilesUris, req.session.userId);
+
+	let folders: Folder[], files: FileData[];
+	if (contentToCopyDetails.msg === "valid uris"){
+		folders = contentToCopyDetails.folders as Folder[]
+		files = contentToCopyDetails.files as FileData[]
+	}else if (contentToCopyDetails.msg === "invalid uris") {
+		res.status(400).json({msg: null, errorMsg: "Some of the files to be copied do not exist", data: contentToCopyDetails.invalidUris})
+		return
+	}else {
+		res.status(500).json({msg: null, errorMsg: "Internal Server Error", data: null})
+		return
+	}
+
+	let copiedFilesData: FileData[] = files.map((file) => {
+		return {...file, _id: new ObjectId(), pathName: file.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
+	})
+	let copiedFolders: Folder[] = folders.map((folder) => {
+		return {...folder, _id: new ObjectId(), pathName: folder.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
+	})
+	const user = await dbClient.getUserWithId(req.session.userId) as User
+	const querySuccessful = await dbClient.insertCopiedResources(copiedFilesData, copiedFolders, user)
+
+	if (querySuccessful) {
+		if (files.length > 0) {
+			// todo: probably put this in a try-catch block and reverse changes incase something goes wrong
+			copyFilesOnDisk(files, copiedFilesData)
+		}
+		res.status(200).json({msg: "successful!", errorMsg: null, data: null})
+	}else {
+		res.status(500).json({msg: "", errorMsg: "Internal Server Error. Not your fault though", data: null})
+	}
+}
+
+export async function searchFilesReqHandler(req: Request, res: Response) {
+	if (!req.query.search_query)
+		res.status(400).json({data: null, errorMsg: "Bad request!", msg: null})
+	const {msg, data, errorMsg, status} = await dbClient.searchForFile(req.query.search_query) // make it case insensitive
+	// console.log(msg, data, errorMsg, status)
+	res.status(status).json({msg, data, errorMsg})
+}
+
+
+export async function fileDownloadReqHandler(req: Request, res: Response) {
+	const fileDetails = await dbClient.getFileDetails(req.params.fileUri, req.session.userId)
+	if (fileDetails) {
+		res.download(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`, fileDetails.name, function(err) {
+			if (err) { // note: file may have been partially sent
+				console.log(err)
+			}
+		})
+	}else {
+		res.status(404).json({errorMsg: "File not found!", data: null, msg: null})
 	}
 }
