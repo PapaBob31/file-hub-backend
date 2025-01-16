@@ -639,3 +639,15 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 		res.status(404).json({errorMsg: "File not found!", data: null, msg: null})
 	}
 }
+
+export async function mainReqHandler(_req: Request, res: Response) {
+	console.log("DEBUG:", _req.originalUrl)
+	res.sendFile("index.html", {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\static\\`}, function(err) {
+		if (err) {
+			// console.log(err)
+			console.log("\nAn Error occured while trying to send index.html\n")
+		}else {
+			console.log("Sent:", "index.html")
+		}
+	})
+}

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import {
 	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler, moveFilesReqHandler, 
-	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler, 
+	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler,
 	sharedFileContentReqHandler, fileDownloadReqHandler, newFavFileReqHandler, fileRenameHandler, uploadDelFromHistoryHandler, sharedFileMetaDataReqdHandler,
 	accessGrantReqHandler, UserSharedFilesDetailsReqHandler, searchFilesReqHandler, copySharedFilesReqHandler, revokeSharedAccessReqHandler
 } from "../controllers/index.js";
