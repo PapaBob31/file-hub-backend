@@ -1,4 +1,4 @@
-{	"includes": ["/src"],
+{	"includes": ["/src/services"],
 	"compilerOptions": {
 		"noImplicitAny": true,
 		"module": "nodenext",
