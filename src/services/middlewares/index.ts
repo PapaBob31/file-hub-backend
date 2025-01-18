@@ -39,7 +39,7 @@ export function logRequestDetails(req: Request, _res: Response, next: ()=>void) 
 }
 
 export async function authenticateUser(req: Request, res: Response, next: ()=>void) {
-	const excludedEndpoints = ["/login", "/signup", "/auth-user-details"];
+	const excludedEndpoints = ["/services/login", "/services/signup", "/services/auth-user-details"];
 	if (excludedEndpoints.includes(req.originalUrl)) {
 		next()
 		return;
@@ -54,7 +54,7 @@ export async function authenticateUser(req: Request, res: Response, next: ()=>vo
 }
 
 export async function checkForCSRF(req: Request, res: Response, next: ()=>void) {
-	const excludedEndpoints = ["/login", "/signup", "/auth-user-details"];
+	const excludedEndpoints = ["/services/login", "/services/signup", "/services/auth-user-details"];
 	const tokens = new Tokens()
 
 	if (excludedEndpoints.includes(req.originalUrl) || req.method === "GET") {
