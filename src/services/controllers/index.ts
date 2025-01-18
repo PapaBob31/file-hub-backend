@@ -39,12 +39,6 @@ check if it's safe to perform side effects with GET requests
 BULL?
 */
 
-/* file sharing implementation
-1. make a file or folder publicly accessible to anybody
-2. every user should have a unique shareId
-
-*/
-
 
 // todo: implement proper pathname and make sure we can't override existing file
 function generateUniqueFileName(request: Request) {
@@ -266,14 +260,14 @@ async function getFileStream(fileUri: string, userId: string) {
 		return {status: 400, msg: "Bad Request", fileStream: null, aesDecipher: null};
 	}
 	// todo: add proper path name and try and make every type of video supported on most browsers [start from firefox not supporting mkv]
-	if (!fs.existsSync(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)) {
+	if (!fs.existsSync(`../uploads/${fileDetails.pathName}`)) {
 		return {status: 404, msg: "File not found", fileStream: null, aesDecipher: null};
 	}
 	const user = await dbClient.getUserWithId(userId) as User;
 	const key = scryptSync(user.password, 'notRandomSalt', 24) 
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
 	// what if i doesn't return a file stream?
-	const fileStream = fs.createReadStream(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`)
+	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
 	return {status: null, msg: null, fileStream, aesDecipher};
 }
 
@@ -513,9 +507,9 @@ export async function moveFilesReqHandler(req: Request, res: Response) {
 
 function copyFilesOnDisk(files: FileData[], newlyCopiedFiles: FileData[]) {
 	for (let i=0; i<files.length; i++) {
-		fs.copyFileSync(
-			`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${files[i].pathName}`, 
-			`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${newlyCopiedFiles[i].pathName}`
+		fs.copyFileSync( // this would block!! Do something about it
+			`../uploads/${files[i].pathName}`, 
+			`../uploads/${newlyCopiedFiles[i].pathName}`
 		)
 	}
 }
@@ -630,7 +624,7 @@ export async function searchFilesReqHandler(req: Request, res: Response) {
 export async function fileDownloadReqHandler(req: Request, res: Response) {
 	const fileDetails = await dbClient.getFileDetails(req.params.fileUri, req.session.userId)
 	if (fileDetails) {
-		res.download(`C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\src\\uploads\\${fileDetails.pathName}`, fileDetails.name, function(err) {
+		res.download(`../uploads/${fileDetails.pathName}`, fileDetails.name, function(err) {
 			if (err) { // note: file may have been partially sent
 				console.log(err)
 			}
@@ -640,9 +634,9 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 	}
 }
 
-export async function mainReqHandler(_req: Request, res: Response) {
+export async function htmlFileReqHandler(_req: Request, res: Response) {
 	console.log("DEBUG:", _req.originalUrl)
-	res.sendFile("index.html", {root: `C:\\Users\\HP\\Desktop\\stuff\\web dev\\fylo-backend\\static\\`}, function(err) {
+	res.sendFile("index.html", {root: "../static"}, function(err) {
 		if (err) {
 			// console.log(err)
 			console.log("\nAn Error occured while trying to send index.html\n")
