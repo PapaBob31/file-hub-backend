@@ -1,9 +1,9 @@
 import { Router } from "express";
 import {
 	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler, moveFilesReqHandler, 
-	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler,
+	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler, deleteUserReqHandler,
 	sharedFileContentReqHandler, fileDownloadReqHandler, newFavFileReqHandler, fileRenameHandler, uploadDelFromHistoryHandler, sharedFileMetaDataReqdHandler,
-	accessGrantReqHandler, UserSharedFilesDetailsReqHandler, searchFilesReqHandler, copySharedFilesReqHandler, revokeSharedAccessReqHandler
+	accessGrantReqHandler, UserSharedFilesDetailsReqHandler, searchFilesReqHandler, copySharedFilesReqHandler, revokeSharedAccessReqHandler, sessionEndReqHandler
 } from "../controllers/index.js";
 
 const router = Router()
@@ -31,5 +31,6 @@ router.post("/move-files", moveFilesReqHandler)
 router.post("/copy-files", copyFilesReqHandler) // payload{fileUri: targetFolderUri}
 router.get("/search", searchFilesReqHandler) // payload{fileUri: targetFolderUri}
 router.get("/download/:fileUri", fileDownloadReqHandler)
-
+router.post("/logout", sessionEndReqHandler)
+router.post("/delete-account", deleteUserReqHandler)
 export default router;
