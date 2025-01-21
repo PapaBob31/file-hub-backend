@@ -12,7 +12,7 @@ if (process.env.MODE === "development") {
 }
 
 export const loginSession = session({
-	name: process.env.name + 'Id',
+	name: process.env.name + 'Id', // fix this bug: process.env.name is undefined
 	secret: sessionSecretArray,
 	saveUninitialized: false,
 	resave: false,
@@ -44,7 +44,9 @@ export async function authenticateUser(req: Request, res: Response, next: ()=>vo
 		next()
 		return;
 	}
-
+	if (!req.session.userId) {
+		res.status(401).json({errorMsg: "Unauthorised! Pls login", msg: null, data: null});
+	}
 	const user = await dbClient.getUserWithId(req.session.userId) // learn declarative merging later to fix this ts bug
 	if (user){
 		next()
