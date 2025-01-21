@@ -647,6 +647,37 @@ class SyncedReqClient {
 			return {status: 500, errorMsg: "Internal Server Error", data: null, msg: null}
 		}
 	}
+
+	async deleteUserData(userId: string) {
+		const users = this.#dataBase.collection<User>("users")
+		const files = this.#dataBase.collection<FileData>("uploaded_files");
+		const folders = this.#dataBase.collection<Folder>("folders");
+
+		try {
+			const userFilesPaths = await files.aggregate([
+										{$match: {userId: new ObjectId(userId)}},
+										{$project: {pathName: 1}}
+									]).toArray()
+			await files.deleteMany({userId: new ObjectId(userId)})
+			await folders.deleteMany({userId: new ObjectId(userId)})
+
+			for (let fileData of userFilesPaths) {
+				await fsPromises.unlink("../uploads/"+fileData.pathName)
+			}
+
+			const deleteUserQueryResult = await users.deleteOne({_id: new ObjectId(userId)})
+
+			if (deleteUserQueryResult.acknowledged) {
+				return {status: 200, errorMsg: "User deleted!", data: null, msg: null}
+			}else {
+				return {status: 500, errorMsg: "Internal Server Error", data: null, msg: null}
+			}
+
+		}catch(err) {
+			console.log(err)
+			return {status: 500, errorMsg: "Internal Server Error", data: null, msg: null}
+		}
+	}
 }
 
 const connectionStr = process.env.DB_CONNECTION_STRING as string; // search how to get connection string

@@ -17,7 +17,6 @@ Query only the required fields. Stop querying all fields, encrypt and decrypt al
 Add serious logging => response type, db errors, server errors e.t.c.
 Add types to evrything!
 enforce password patterns on the frontend
-Install enviroment variables
 use it to store details and distinguish between prod and dev mode
 implement all encryption and decryption such as pasword hashing, csrf tokens, sessionId e.t.c
 prevent usage of stolen auth cookies
@@ -622,16 +621,28 @@ export async function searchFilesReqHandler(req: Request, res: Response) {
 
 
 export async function fileDownloadReqHandler(req: Request, res: Response) {
-	const fileDetails = await dbClient.getFileDetails(req.params.fileUri, req.session.userId)
-	if (fileDetails) {
-		res.download(`../uploads/${fileDetails.pathName}`, fileDetails.name, function(err) {
-			if (err) { // note: file may have been partially sent
-				console.log(err)
-			}
-		})
-	}else {
-		res.status(404).json({errorMsg: "File not found!", data: null, msg: null})
+	const fileDetails = await dbClient.getFileDetails(req.params.fileUri,  req.session.userId);
+
+	if (!fileDetails){
+		return res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
 	}
+
+	if (!fs.existsSync(`../uploads/${fileDetails.pathName}`)) {
+		return res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
+	}
+
+	const user = await dbClient.getUserWithId(req.session.userId) as User;
+	const key = scryptSync(user.password, 'notRandomSalt', 24) 
+	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
+	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
+
+	if (fileStream && aesDecipher) {
+		res.attachment()
+		res.type(fileDetails.type)
+		fileStream.pipe(aesDecipher).pipe(res)
+	}else 
+		res.status(500).json("Something went wrong but it's not your fault")
+
 }
 
 export async function htmlFileReqHandler(_req: Request, res: Response) {
@@ -644,4 +655,38 @@ export async function htmlFileReqHandler(_req: Request, res: Response) {
 			console.log("Sent:", "index.html")
 		}
 	})
+}
+
+export async function sessionEndReqHandler(req: Request, res: Response) {
+	if (!req.session.userId) {
+		res.status(400).json({msg: null, errorMsg: "No current session!", data: null})
+		return;
+	}
+	req.session.destroy((err) => {
+		if (err) {
+			console.log(err) // indicate that the errpor occured while trying to delete user session
+			res.status(500).json({msg: null, errorMsg: "Something went wrong! Not your fault tho!", data: null})
+		}else
+			res.status(200).json({msg: "Logout successful!", errormsg: null, data: null})
+	})
+}
+
+export async function deleteUserReqHandler(req: Request, res: Response) {
+	if (!req.session.userId) {
+		res.status(400).json({msg: null, errorMsg: "No current session!", data: null})
+		return;
+	}
+	let {status, errorMsg, msg, data} = await dbClient.deleteUserData(req.session.userId);
+	if (status === 200) {
+		req.session.destroy((err) => {
+			if (err) {
+				console.log(err) // todo: indicate that the errpor occured while trying to delete user session
+				status = 500; 
+				errorMsg = "Something went wrong! Not your fault tho!"; 
+				msg = null
+				data =  null
+			}
+		})
+	}
+	res.status(status).json({data, errorMsg, msg})
 }
