@@ -637,7 +637,8 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
 
 	if (fileStream && aesDecipher) {
-		res.attachment()
+		res.attachment(fileDetails.name)
+		res.set("Content-Length", fileDetails.size.toString())
 		res.type(fileDetails.type)
 		fileStream.pipe(aesDecipher).pipe(res)
 	}else 
