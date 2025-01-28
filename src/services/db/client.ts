@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type UpdateResult } from "mongodb";
-import { generateUrlSlug } from "../controllers/utilities.js"
 import { scryptSync, randomBytes } from "node:crypto"
+import { nanoid } from "nanoid"
 import fsPromises from "fs/promises"
 
 
@@ -62,6 +62,12 @@ interface ResourcesDetails{
 	resourcesData: {uri: string, type: "file"|"folder", excludedEntriesUris: string[]}[];
 }
 
+interface UserCreationErrors {
+	password: string,
+	general: string,
+	username: string,
+	email: string
+} 
 
 function extractInvalidUris(targetUris: string[], validUriFiles: (FileData|Folder)[]) {
 	const invalidUris: string[] = []
@@ -85,6 +91,7 @@ function extractInvalidUris(targetUris: string[], validUriFiles: (FileData|Folde
 // implement constraints
 // project all the fields that's actually needed on the frontend
 // close all freaking cursors
+// INDEXES
 class SyncedReqClient {
 	#client;
 	#dataBase;
@@ -152,11 +159,11 @@ class SyncedReqClient {
 	}
 
 	// read up on mongodb's concurrency control 
-	async addUploadedFileSize(fileId: string, sizeUploaded: number, userId: string, uploadedDataSize: number) : Promise<{acknowledged: boolean}> {
+	async addUploadedFileSize(fileId: string, newFileSize: number, userId: string, uploadedDataSize: number) : Promise<{acknowledged: boolean}> {
 		let result = {acknowledged: false};
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
-			const updates = await fileDetails.updateOne({_id: new ObjectId(fileId)}, {$set: {sizeUploaded}}) as UpdateResult;
+			const updates = await fileDetails.updateOne({_id: new ObjectId(fileId)}, {$set: {sizeUploaded: newFileSize}}) as UpdateResult;
 			const userStorageUpdated = await this.updateUsedUserStorage(userId, uploadedDataSize)
 			if (updates.acknowledged && userStorageUpdated)
 				result.acknowledged = true;
@@ -204,11 +211,10 @@ class SyncedReqClient {
 	}
 
 	async getFileByHash(userId: string, hash: string, name: string) {
+		const fileDetails = this.#dataBase.collection("uploaded_files")
 		let fileData:FileData|null = null;
 		try {
-			const fileDetails = await this.#dataBase.collection("uploaded_files")
 			fileData = await fileDetails.findOne<FileData>({userId: new ObjectId(userId), hash, name})
-			// console.log("DEBUG!", fileData);
 		}catch(err) {
 			console.log(err);
 		}
@@ -277,15 +283,23 @@ class SyncedReqClient {
 		}
 	}
 
-	async createNewUser(userData: User) {
-		let status = ""
-		try {
-			const users = await this.#dataBase.collection("users");
+	async createNewUser(userData: User): Promise<{status: number, msg: string|null, errorMsg: UserCreationErrors|null}> {
+		const users = await this.#dataBase.collection("users");
 
-			const existingUser = await users.findOne({email: userData.email})
-			if (existingUser)
-				throw new Error("Email already in use")
-			const homeFolderUri = generateUrlSlug();
+		try {
+			let duplicateEmailError = ""
+			let duplicateUsernameError = ""
+			const existingEmail = await users.findOne({email: {$regex: userData.email, $options: "i"}})
+			if (existingEmail)
+				duplicateEmailError += "Email already in use. Emails are case-sensitive"
+
+			const exisitingUsername = await users.findOne({username: {$regex: userData.username, $options: "i"}})
+			if (exisitingUsername)
+				duplicateUsernameError += "Username already in use. Usernames are case-sensitive"
+			if (existingEmail || exisitingUsername)
+				return {status: 400, errorMsg: {password: "", general:"", username: duplicateUsernameError, email: duplicateEmailError}, msg: null}
+
+			const homeFolderUri = nanoid();
 			const uniqueSalt = randomBytes(32).toString('hex');
 			const passwordHash = scryptSync(userData.password, uniqueSalt, 64, {N: 8192, p: 10}).toString('hex')
 			const queryResult = await users.insertOne({
@@ -297,10 +311,9 @@ class SyncedReqClient {
 				plan: "free",
 				usedStorage: 0,
 				storageCapacity: 16106127360
-			}
-			);
+			});
 			if (!queryResult.acknowledged) {
-				throw new Error("Something went wrong")
+				return {status: 500, errorMsg: {password: "", general:"Something went wrong!", username: "", email: ""}, msg: null}
 			}
 
 			const queryResult2 = await this.createNewFolderEntry({
@@ -316,16 +329,12 @@ class SyncedReqClient {
 
 			if (!queryResult2.acknowledged) {
 				await users.deleteOne({username: userData.username, email: userData.email}) // what if this fails too
-				throw new Error("Something went wrong")
 			}
 
-			status = "success"
 		}catch(err) {
-			if (err.message === "Email already in use")
-				status = err.message
-			else status = "failure" // todo: change this generic failure message to something like 'Email already in use'
+			return {status: 500, errorMsg: {password: "", general:"Something went wrong!", username: "", email: ""}, msg: null}
 		}
-		return status;
+		return {status: 201, msg: "Account created successfully! Check your email for further instructions", errorMsg: null}
 	}
 
 	async loginUser(loginData: User) {
