@@ -186,7 +186,6 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	const key = scryptSync(user.password, 'notRandomSalt', 24) 
 	const aesCipher = createCipheriv("aes-192-cbc", key, Buffer.from(uploadedData.iv, 'hex'))
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from(uploadedData.iv, 'hex'))
-	// console.log(aesDecipher.allowHalfOpen, aesCipher.allowHalfOpen)
 
 	if (uploadedData.sizeUploaded !== 0) { // The file has ben partially uploaded before
 		if (!fs.existsSync("../uploads/"+uploadedData.pathName)) { // this should be impossible; log that the file for the record wasn't found? delete the record?
@@ -196,89 +195,24 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		const fileStream = fs.createReadStream("../uploads/"+uploadedData.pathName) // if not fileStream??
 		const tempFileName = nanoid();
 		writeToFile("../uploads/"+tempFileName, "", 'w');
-		// const tempFileStream = fs.createWriteStream("../uploads/"+tempFileName)
 		fileStream.pipe(aesDecipher)
 		aesDecipher.on("data", (chunk)=>{
-			writeToFile("../uploads/"+tempFileName, aesCipher.update(aesDecipher.update(chunk)), 'a');
+			writeToFile("../uploads/"+tempFileName, aesCipher.update(chunk), 'a');
 		})
-		/*fileStream.on("end", async ()=>{
-			// throw new Error("crash app")
-			writeToFile("../uploads/"+tempFileName, aesCipher.update(aesDecipher.final()), 'a');
+		aesDecipher.on('finish', async ()=> {
 			await fsPromises.unlink("../uploads/"+uploadedData.pathName)
 			await fsPromises.rename("../uploads/"+tempFileName, "../uploads/"+uploadedData.pathName)
 			updateFileContent(req, uploadedData, uploadTracker, aesCipher)
-		})*/
-		// aesCipher.allowHalfOpen = true
-		/*tempFileStream.on('finish', async ()=> {
-			await fsPromises.unlink("../uploads/"+uploadedData.pathName)
-			await fsPromises.rename("../uploads/"+tempFileName, "../uploads/"+uploadedData.pathName)
-			updateFileContent(req, uploadedData, uploadTracker, aesCipher)
-		})*/
-		/*pipeline(fileStream, aesDecipher, aesCipher, (err) => { // decrypt the partial file first in order to re-encrypt the updates as one file
-			console.log("as how?")
-			if (!err) {
-				console.log("here?")
-				updateFileContent(req, uploadedData, uploadTracker, aesCipher)
-			}else {
-				console.log(err)
-				res.status(500).json({errorMsg: "OMO", msg: null, data: null});
-				return;
-			}
-		})*/
-	}else {
-		updateFileContent(req, uploadedData, uploadTracker, aesCipher)
-	}
-	// can 'close' be emitted before the 'data' event is attached due to decrypting data when resuming file upload
-	req.on('close', () => handleFileUploadEnd(req, res, uploadTracker.sizeUploaded, uploadedData, aesCipher))
-
-	/*if (uploadedData.sizeUploaded !== 0) { // The file has ben partially uploaded before
-		if (!fs.existsSync("../uploads/"+uploadedData.pathName)) { // this should be impossible; log that the file for the record wasn't found? delete the record?
-			res.status(400).json({msg: "Invalid request!"});
-			return
-		}
-		const fileStream = fs.createReadStream("../uploads/"+uploadedData.pathName) // if not fileStream??
-		pipeline(fileStream, aesDecipher, aesCipher, (err) => { // decrypt the partial file first in order to re-encrypt the updates as one file
-			if (!err) {
-				writeToFile("../uploads/"+uploadedData!.pathName, "", 'w'); // clear the file so we can can write new updated data to it
-				req.on('data', (chunk)=>{
-					writeToFile("../uploads/"+uploadedData!.pathName, aesCipher.update(chunk), 'a'); 
-					uploadTracker.sizeUploaded += chunk.length;
-				})
-			}else {
-				res.status(500).json({errorMsg: "OMO", msg: null, data: null});
-				return;
-			}
 		})
 	}else {
-		writeToFile("../uploads/"+uploadedData!.pathName, "", 'w'); // create the file
+		writeToFile("../uploads/"+uploadedData.pathName, "", 'w'); // create empty file that the encrypted data will be stored in
 		req.on('data', (chunk)=>{
-			writeToFile("../uploads/"+uploadedData!.pathName, aesCipher.update(chunk), 'a');
+			writeToFile("../uploads/"+uploadedData.pathName, aesCipher.update(chunk), 'a');
 			uploadTracker.sizeUploaded += chunk.length;
 		})
 	}
-
-	req.on('close', async () => { // can 'close' be emitted before the 'data' event is attached due to decrypting data when resuming file upload
-		const lengthOfRecvdData = uploadTracker.sizeUploaded;
-		uploadTracker.sizeUploaded += uploadedData!.sizeUploaded // new uploaded length
-
-		if (req.complete) {
-			console.log("CLIENT DIDN'T ABORT")
-			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.session.userId, lengthOfRecvdData)
-	
-			if (result.acknowledged) {
-				uploadedData!.sizeUploaded = uploadTracker.sizeUploaded;
-				res.status(200).send(JSON.stringify(uploadedData))
-			}else
-				res.status(500).send("OMO")
-		}else {
-			console.log("CLIENT ABORTED")
-			const result = await dbClient.addUploadedFileSize(uploadTracker.fileId, uploadTracker.sizeUploaded, req.session.userId, lengthOfRecvdData)
-			if (!result.acknowledged) {
-				// do something .... but what?
-			}
-		}
-		writeToFile("../uploads/"+uploadedData!.pathName, aesCipher.final(), 'a');
-	})*/
+	// can 'close' be emitted before the 'data' event is attached due to decrypting data when resuming file upload
+	req.on('close', () => handleFileUploadEnd(req, res, uploadTracker.sizeUploaded, uploadedData, aesCipher))
 }
 
 
@@ -341,9 +275,9 @@ async function getFileStream(fileUri: string, userId: string) {
 		return {status: 404, msg: "File not found", fileStream: null, aesDecipher: null};
 	}
 	const user = await dbClient.getUserWithId(userId) as User;
-	const key = scryptSync(user.password, 'notRandomSalt', 24) 
+	const key = scryptSync(user.password, 'notRandomSalt', 24)
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from(fileDetails.iv, 'hex'))
-	// what if i doesn't return a file stream?
+	// what if it doesn't return a file stream?
 	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
 	return {status: null, msg: null, fileStream, aesDecipher};
 }
