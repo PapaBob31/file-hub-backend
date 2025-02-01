@@ -187,7 +187,7 @@ class SyncedReqClient {
 		return result;
 	}
 
-	async getFilesData(userId: string, folderUri: string) {
+	async getFilesData(userId: string, folderUri: string) { // has invalid folderUri bug
 		let data:any = null;
 		try {
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
@@ -215,7 +215,7 @@ class SyncedReqClient {
 					{$project: {"ancestors.name": 1, "ancestors.uri": 1}}
 			]).toArray()
 
-			data = {pathDetails: folderMetaData[0].ancestors, content: filesData.concat(foldersData)}
+			data = {pathDetails: folderMetaData[0].ancestors, content: ([] as (FileData|Folder)[]).concat(filesData,foldersData)}
 
 		}catch(err) {
 			data = [];
@@ -400,7 +400,7 @@ class SyncedReqClient {
 	 * @param {Folder} folderDoc - document representing the folder's metadata that will be stored in the db */
 	async createNewFolderEntry(folderDoc: Folder) {
 		const folders = await this.#dataBase.collection<Folder>("folders");
-		let result = {acknowledged: false, insertedId: "", uri: ""};
+		let result = {acknowledged: false, insertedId: "" as string|ObjectId, uri: ""};
 		try {
 			const queryResult = await folders.insertOne(folderDoc);
 			if (queryResult) {
@@ -488,7 +488,7 @@ class SyncedReqClient {
 			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
 			const foldersData = await folderCursorObj.toArray();
 
-			data = filesData.concat(foldersData)
+			data =  ([] as (FileData|Folder)[]).concat(filesData,foldersData)
 
 		}catch(err) {
 			data = [];
@@ -607,7 +607,7 @@ class SyncedReqClient {
 			const targetFiles = await files.find({userId: new ObjectId(userId), uri: {$in: filesToCopyUris}}).toArray()
 
 			if (targetFolders.length + targetFiles.length !== filesToCopyUris.length) { // missing files or folders to be copied
-				const invalidUris = extractInvalidUris(filesToCopyUris, targetFolders.concat(targetFiles))
+				const invalidUris = extractInvalidUris(filesToCopyUris, ([] as (FileData|Folder)[]).concat(targetFolders,targetFiles))
 				if (invalidUris.length > 0) {
 					return {msg: "invalid uris", files: null, folders: null, invalidUris}
 				}
@@ -637,7 +637,7 @@ class SyncedReqClient {
 				const movedContentUris = movedContent.map(file => file.uri)
 				filesMoveQueryResult = await files.updateMany({uri: {$in: movedContentUris}}, {$set: {parentFolderUri: destinationFolder.uri}}, {session})
 				foldersMoveQueryResult = await folders.updateMany({uri: {$in: movedContentUris}}, {$set: {parentFolderUri: destinationFolder.uri}}, {session})
-			}, transactionOptions)
+			}, transactionOptions as any) // 'any' is blocking a type error that s=you should probably fix
 			if ((filesMoveQueryResult!.acknowledged) && (foldersMoveQueryResult!.acknowledged)){
 				querySuccessful = true;
 			}
@@ -679,7 +679,7 @@ class SyncedReqClient {
 				if (copiedFolders.length > 0)
 					foldersCopyQueryResult = await folders.insertMany(copiedFolders, {session})
 				storageQuery = await users.updateOne({_id: new ObjectId(user._id)}, {$set: {usedStorage: user.usedStorage+totalFilesSize}}, {session})
-			}, transactionOptions)
+			}, transactionOptions as any) // 'any' is blocking a type error that s=you should probably fix
 
 			if (filesCopyQueryResult!.acknowledged && foldersCopyQueryResult!.acknowledged && storageQuery!.acknowledged) {
 				querySuccessful = true
@@ -701,7 +701,7 @@ class SyncedReqClient {
 		try {
 			const searchedFiles = await files.find({name: {$regex:  searchString}}).toArray();
 			const searchedFolders = await folders.find({name: {$regex: searchString}}).toArray();
-			const results = searchedFiles.concat(searchedFolders)
+			const results = ([] as (FileData|Folder)[]).concat(searchedFiles,searchedFolders)
 			if (results.length === 0)
 				return {status: 404, msg: null, errorMsg: "File or folder not found!", data: null}
 			return {status: 200, data: results, msg: "Successful!", errorMsg: null}

@@ -46,8 +46,9 @@ export async function authenticateUser(req: Request, res: Response, next: ()=>vo
 	}
 	if (!req.session.userId) {
 		res.status(401).json({errorMsg: "Unauthorised! Pls login", msg: null, data: null});
+		return
 	}
-	const user = await dbClient.getUserWithId(req.session.userId) // learn declarative merging later to fix this ts bug
+	const user = await dbClient.getUserWithId(req.session.userId)
 	if (user){
 		next()
 	}else {
@@ -61,7 +62,7 @@ export async function checkForCSRF(req: Request, res: Response, next: ()=>void) 
 
 	if (excludedEndpoints.includes(req.originalUrl) || req.method === "GET") {
 		next()
-	}else if (!tokens.verify(req.session.csrfSecret, req.headers["x-file-vault-csrf-token"] as string)) {
+	}else if (!tokens.verify(req.session.csrfSecret as string, req.headers["x-file-vault-csrf-token"] as string)) {
 		res.status(400).json({msg: "Invalid request!"})
 		req.destroy()
 	}else {

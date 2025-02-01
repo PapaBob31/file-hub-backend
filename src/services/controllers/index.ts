@@ -22,10 +22,12 @@ handle bogus http requests, i.e 404 everyhing that ought to have a payload but d
 filepath issues such as file path max name length; max file size, path traversing exploits, e.t.c
 what happens if I set invalid response code i.e 4000 instead of 400
 
+ensure proper validation especially all those type assertions
+
 LOGOUT
 
 How does exppress work internally? Should I use threads?
-
+--->> do everything related to time properly and deleting a file should delete it from any shared entry if any too
 send a file request and abort while the page reloads to see how express reacts
 
 BULL?
@@ -54,7 +56,7 @@ export async function loginHandler(req: Request, res: Response) {
 	const user = await dbClient.loginUser(req.body);
 	if (user) {
 		const tokens = new Tokens()
-		req.session.userId = user._id
+		req.session.userId = user._id as string
 		req.session.csrfSecret = tokens.secretSync()
 		return res.status(200).json({msg: "success", loggedInUserName: user.username})
 	}else return res.status(401).json({error: "Invalid login details!"});
@@ -80,7 +82,7 @@ function headersAreValid(request: Request) {
 	return true;
 }
 
-function generateMetaData(request: Request, parentFolder: Folder):FileData {
+function generateMetaData(request: Request):FileData {
 	return  {
 		name: request.headers["x-local-name"] as string,
 		pathName: generateUniqueFileName(request),
@@ -103,24 +105,24 @@ function generateMetaData(request: Request, parentFolder: Folder):FileData {
 async function getIncomingFileMetaData(req: Request) : Promise<{errorMsg: null|string, data: FileData|null}>  {
 
 	if (req.headers["x-resume-upload"] === "true") {
-		let uploadedData = await dbClient.getFileByHash(req.session.userId, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string)
+		let uploadedData = await dbClient.getFileByHash(req.session.userId as string, req.headers["x-file-hash"] as string, req.headers["x-local-name"] as string)
 		if (!uploadedData) {
 			return {errorMsg: "File to be updated doesn't exist!", data: null}
 		}
 		return {errorMsg: null, data: uploadedData}
 	}else {
-		const parentFolder = await dbClient.getFolderDetails(req.params.folderUri, req.session.userId)
+		const parentFolder = await dbClient.getFolderDetails(req.params.folderUri, req.session.userId as string)
 		if (!parentFolder){
 			return {errorMsg: "Invalid request! Parent folder doesn't exist", data: null}
 		}
-		let metaData = generateMetaData(req, parentFolder)
+		let metaData = generateMetaData(req)
 		let uploadedData = await dbClient.storeFileDetails(metaData);
 		return {errorMsg: null, data: uploadedData}
 	}
 }
 
 /** Encrypts the body of a file upload and updates a file with the encrypted content */
-function updateFileContent(req: Request, fileData: FileData, uploadTracker: {sizeUploaded: number, fileId: string}, cipher) {
+function updateFileContent(req: Request, fileData: FileData, uploadTracker: {sizeUploaded: number, fileId: string}, cipher: any) { // cipher types?
 	req.on('data', (chunk)=>{
 		writeToFile("../uploads/"+fileData.pathName, cipher.update(chunk), 'a');
 		uploadTracker.sizeUploaded += chunk.length;
@@ -128,14 +130,14 @@ function updateFileContent(req: Request, fileData: FileData, uploadTracker: {siz
 }
 
 /** Performs the necessary db update and other side effects after a file's content has been updated with a new upload */
-async function handleFileUploadEnd(req: Request, res: Response, lengthOfRecvdData: number, fileData: FileData, cipher) {
+async function handleFileUploadEnd(req: Request, res: Response, lengthOfRecvdData: number, fileData: FileData, cipher: any) {
 	const lastUploadChunk = cipher.final();
 	writeToFile("../uploads/"+fileData.pathName, lastUploadChunk, 'a');
 	lengthOfRecvdData += lastUploadChunk.length
 
 	if (req.complete) {
 		const newFileSize = fileData.sizeUploaded + lengthOfRecvdData
-		const result = await dbClient.addUploadedFileSize(fileData._id as string, newFileSize, req.session.userId, lengthOfRecvdData)
+		const result = await dbClient.addUploadedFileSize(fileData._id as string, newFileSize, req.session.userId as string, lengthOfRecvdData)
 
 		if (result.acknowledged) {
 			fileData.sizeUploaded = fileData.sizeUploaded + lengthOfRecvdData;
@@ -144,7 +146,7 @@ async function handleFileUploadEnd(req: Request, res: Response, lengthOfRecvdDat
 			res.status(500).send(JSON.stringify({data: null, errorMsg: "Internal Server Error!", msg: null}))
 	}else { // The upload was paused or aborted client side
 		const newFileSize = fileData.sizeUploaded + lengthOfRecvdData
-		const result = await dbClient.addUploadedFileSize(fileData._id as string, newFileSize, req.session.userId, lengthOfRecvdData)
+		const result = await dbClient.addUploadedFileSize(fileData._id as string, newFileSize, req.session.userId as string, lengthOfRecvdData)
 		if (!result.acknowledged) {
 			// do something .... but what?
 		}
@@ -161,7 +163,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		return;
 	}
 
-	const user = await dbClient.getUserWithId(req.session.userId)
+	const user = await dbClient.getUserWithId(req.session.userId as string)
 	if (!user) {
 		res.status(401).json({errorMsg: "Unauthenticated user!", msg: null, data: null});
 		return;
@@ -216,7 +218,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 /** Handles a request to delete a file from the user's upload history 
  * @param {string} req.params.fileUri - db uri of the file to remove history */
 export async function uploadDelFromHistoryHandler(req: Request, res: Response) {
-	const results = await dbClient.deleteFromHistory(req.params.fileUri, req.session.userId)
+	const results = await dbClient.deleteFromHistory(req.params.fileUri, req.session.userId as string)
 	if (results.acknowledged)
 		res.status(200).json({msg: "File has been removed from upload history", errorMsg: null, data: null})
 	else
@@ -232,7 +234,7 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
 	}
 	// readup on accepted characters in urls
 	const responseData = await dbClient.getFileByHash(
-		req.session.userId, decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string
+		req.session.userId as string, decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string
 	)
 	if (!responseData){
 		res.status(400).json({errorMsg: "BAD REQUEST!", data: null, msg: null})
@@ -244,17 +246,17 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
 /** Handles a request to get the details/metadata of all files in a logical folder
  * @param {string} req.params.folderUri - db uri of the folder to to get all files from */
 export async function filesRequestHandler(req: Request, res: Response) {
-	const responseData = await dbClient.getFilesData(req.session.userId, req.params.folderUri)
+	const responseData = await dbClient.getFilesData(req.session.userId as string, req.params.folderUri)
 	res.status(200).json({data: responseData.data, msg: null, errorMsg: null})
 }
 
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
-	const user = await dbClient.getUserWithId(req.session.userId)
+	const user = await dbClient.getUserWithId(req.session.userId as string)
 	if (user) {
 		const tokens = new Tokens()
-		res.status(200).json({...user, csrfToken: tokens.create(req.session.csrfSecret)})
+		res.status(200).json({data: {...user, csrfToken: tokens.create(req.session.csrfSecret as string)}, errorMsg: null, msg: null})
 	}else {
-		res.status(401).json("Invalid Request! Unauthenticated User!")
+		res.status(401).json({errorMsg: "Invalid Request! Unauthenticated User!", data: null, msg: null})
 	}
 }
 
@@ -282,7 +284,7 @@ async function getFileStream(fileUri: string, userId: string) {
 /** Handles a request for the content of a file
  * @param {string} req.params.fileUri - db uri of the file whose content is to be sent */
 export async function singleFileReqHandler(req: Request, res: Response) {
-	const {fileStream, status, msg, aesDecipher} = await getFileStream(req.params.fileUri, req.session.userId)
+	const {fileStream, status, msg, aesDecipher} = await getFileStream(req.params.fileUri, req.session.userId as string)
 	if (!fileStream)
 		res.status(status).send(msg);
 
@@ -299,7 +301,7 @@ function generateFolderMetaData(req: Request): Folder|null {
 	return {
 		name: req.body.name,
 		parentFolderUri: req.body.parentFolderUri,
-		userId: new ObjectId(req.session.userId),
+		userId: new ObjectId(req.session.userId as string),
 		uri: nanoid(),
 		type: "folder",
 		timeCreated: (new Date()).toISOString(),
@@ -312,7 +314,7 @@ function generateFolderMetaData(req: Request): Folder|null {
 /** Handles a request to create a logical folder inside the db
  * @param {string} req.body.parentFolderUri - db uri of the folder it will be created inside */
 export async function createFolderReqHandler(req: Request, res: Response) {
-	const parentFolder = await dbClient.getFolderDetails(req.body.parentFolderUri, req.session.userId)
+	const parentFolder = await dbClient.getFolderDetails(req.body.parentFolderUri, req.session.userId as string)
 	if (!parentFolder){
 		res.status(400).json({msg: "Invalid request!"});
 		return;
@@ -331,7 +333,7 @@ export async function createFolderReqHandler(req: Request, res: Response) {
 
 /** Handles a request to get an authenticated user's request handler */
 export async function userUploadHistoryReqHandler(req: Request, res: Response) {
-	const userUploadHistory = await dbClient.getUserUploadHistory(req.session.userId)
+	const userUploadHistory = await dbClient.getUserUploadHistory(req.session.userId as string)
 	if (!userUploadHistory) {
 		res.status(500).json({errorMsg: "Internal db error"})
 	}else {
@@ -341,7 +343,7 @@ export async function userUploadHistoryReqHandler(req: Request, res: Response) {
 
 // todo, revoke all shared file access
 export async function fileDelReqHandler(req: Request, res: Response) {
-	const results = await dbClient.deleteFile(req.session.userId, req.params.fileUri)
+	const results = await dbClient.deleteFile(req.session.userId as string, req.params.fileUri)
 	if (results.acknowledged) {
 		res.status(200).json({msg: "File deleted successfully"})
 	}else {
@@ -351,7 +353,7 @@ export async function fileDelReqHandler(req: Request, res: Response) {
 
 /** Handles a request to add a file to a user's favourites */
 export async function newFavFileReqHandler(req: Request, res: Response) {
-	const result = await dbClient.addFileToFavourites(req.session.userId, req.params.fileUri)
+	const result = await dbClient.addFileToFavourites(req.session.userId as string, req.params.fileUri)
 	if (result.acknowledged){
 		res.status(200).json({msg: "File added to favourites", errorMsg: null, data: null})
 	}else {
@@ -368,7 +370,7 @@ export async function fileRenameHandler(req: Request, res: Response) { // can it
 		return;
 	}
 
-	const results = await dbClient.renameFile(req.session.userId, req.body.fileUri, req.body.newName)
+	const results = await dbClient.renameFile(req.session.userId as string, req.body.fileUri, req.body.newName)
 	if (results.acknowledged) {
 		res.status(200).json({msg: "File Renamed successfully"})
 	}else {
@@ -384,7 +386,7 @@ export async function accessGrantReqHandler(req: Request, res: Response) {
 	if (!req.body.grantees || !req.body.resourcesData) {
 		res.status(400).json({errorMsg: "Invalid request body"})
 	}else {
-		const queryResult = await dbClient.grantResourcesPermission(req.body, req.session.userId)
+		const queryResult = await dbClient.grantResourcesPermission(req.body, req.session.userId as string)
 		if (queryResult.status === 200)
 			res.status(queryResult.status).json({errorMsg: queryResult.msg, msg: null, data: null})
 		res.status(queryResult.status).json({msg: queryResult.msg})
@@ -397,7 +399,7 @@ export async function revokeSharedAccessReqHandler(req: Request, res: Response) 
 	if (!req.body.shareIds) {
 		res.status(400).json({msg: null, errorMsg: "Bad Request!", data: null})
 	}else {
-		const querySuccessful = await dbClient.deleteSharedFileEntry(req.body.shareIds, req.session.userId)
+		const querySuccessful = await dbClient.deleteSharedFileEntry(req.body.shareIds, req.session.userId as string)
 		if (querySuccessful){
 			res.status(200).json({msg: "Files access revoked", data: null, errorMsg: null})
 		}else {
@@ -417,7 +419,7 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 		return
 	}
 
-	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId)
+	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId as string)
 	if (!resource) {
 		res.status(404).json({errorMsg: "File not found!", msg: null, data: null})
 		return;
@@ -430,7 +432,7 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 	}else {
 		// gets a resource uri if it's a child of a shared folder cos sharing a folder is 
 		// sharing all the folder's children by default, no matter how deeply nested
-		const contentIsFolderChild = await dbClient.checkIfFileIsNestedInFolder(resource.grantedResourceUri, req.params.contentUri, req.query.type)
+		const contentIsFolderChild = await dbClient.checkIfFileIsNestedInFolder(resource.grantedResourceUri, req.params.contentUri, req.query.type as "folder"|"file")
 		if (contentIsFolderChild) {
 			targetContentUri = contentIsFolderChild
 		}else {
@@ -460,7 +462,7 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 
 /** Gets the meta data of a shared file/folder using the shared resource uri */
 export async function sharedFileMetaDataReqdHandler(req: Request, res: Response) {
-	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId)
+	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId as string)
 
 	if (!resource) {
 		res.status(404).json({errorMsg: "File not found!", msg: null, data: null})
@@ -485,7 +487,7 @@ export async function sharedFileMetaDataReqdHandler(req: Request, res: Response)
 
 /** Handles a request for all files/folders shared by a user */
 export async function UserSharedFilesDetailsReqHandler(req: Request, res: Response) {
-	const sharedFileLinks = await dbClient.getUserSharedFiles(req.session.userId)
+	const sharedFileLinks = await dbClient.getUserSharedFiles(req.session.userId as string)
 	if (sharedFileLinks) {
 		res.status(200).json({data: sharedFileLinks})
 	}else {
@@ -500,14 +502,14 @@ export async function moveFilesReqHandler(req: Request, res: Response) {
 		res.status(400).json({errorMsg: "No files to copy", data: null, })
 		return
 	}
-	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId)
+	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId as string)
 	if (!destinationFolder) {
 		res.status(400).json({errorMsg: "Bad Request! New Parent Folder doesn't exist", data: null, msg: null})
 		return
 	}
 
 	// validate the moved files/folders uris and get the details of the content to copy 
-	const contentToMoveDetails = await dbClient.getContentDataToCopy(req.body.movedContentsUris, req.session.userId);
+	const contentToMoveDetails = await dbClient.getContentDataToCopy(req.body.movedContentsUris, req.session.userId as string);
 
 	let folders: Folder[], files: FileData[];
 	if (contentToMoveDetails.msg === "valid uris"){
@@ -521,7 +523,7 @@ export async function moveFilesReqHandler(req: Request, res: Response) {
 		return
 	}
 	// 'move' the files/folders by updating their `parentFolderUri` attribute in the db
-	const querySuccessful = await dbClient.updateMovedFiles(folders.concat(files), destinationFolder)
+	const querySuccessful = await dbClient.updateMovedFiles(([] as (FileData|Folder)[]).concat(folders, files), destinationFolder)
 
 	if (querySuccessful) {
 		res.status(200).json({msg: "Files moved successfully!", data: null, errorMsg: null})
@@ -547,9 +549,9 @@ export async function copySharedFilesReqHandler(req: Request, res: Response) {
 		res.status(400).json({errorMsg: "No files to copy", data: null, })
 		return
 	}
-	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId)
-	const queryResponse = await dbClient.getSharedFilesGrantorId(req.body.copiedFilesUris, req.session.userId)
-	// const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId)
+	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId as string)
+	const queryResponse = await dbClient.getSharedFilesGrantorId(req.body.copiedFilesUris, req.session.userId as string)
+	// const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId as string)
 
 	if (queryResponse.status !== 200) {
 		res.status(queryResponse.status).json(queryResponse.payload)
@@ -562,7 +564,7 @@ export async function copySharedFilesReqHandler(req: Request, res: Response) {
 		res.status(400).json({errorMsg: "Bad Request! New Parent Folder doesn't exist", data: null, })
 		return
 	}
-	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedFilesUris, grantorId);
+	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedFilesUris, grantorId as string);
 	let folders: Folder[], files: FileData[];
 	if (contentToCopyDetails.msg === "valid uris"){
 		folders = contentToCopyDetails.folders as Folder[]
@@ -576,14 +578,14 @@ export async function copySharedFilesReqHandler(req: Request, res: Response) {
 	}
 
 	let copiedFilesData: FileData[] = files.map((file) => {
-		return {...file, _id: new ObjectId(), userId: new ObjectId(req.session.userId), 
+		return {...file, _id: new ObjectId(), userId: new ObjectId(req.session.userId as string), 
 		pathName: file.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
 	})
 	let copiedFolders: Folder[] = folders.map((folder) => {
-		return {...folder, _id: new ObjectId(), userId: new ObjectId(req.session.userId), 
+		return {...folder, _id: new ObjectId(), userId: new ObjectId(req.session.userId as string), 
 		pathName: folder.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}  // u need to remove the file extension first if any
 	})
-	const user = await dbClient.getUserWithId(req.session.userId) as User
+	const user = await dbClient.getUserWithId(req.session.userId as string) as User
 	const querySuccessful = await dbClient.insertCopiedResources(copiedFilesData, copiedFolders, user)
 	if (querySuccessful) {
 		if (files.length > 0) {
@@ -604,13 +606,13 @@ export async function copyFilesReqHandler(req: Request, res: Response) {
 		res.status(400).json({errorMsg: "No files to copy", data: null, })
 		return
 	}
-	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId)
+	const destinationFolder = await dbClient.getFolderDetails(req.body.targetFolderUri, req.session.userId as string)
 	if (!destinationFolder) {
 		res.status(400).json({errorMsg: "Bad Request! New Parent Folder doesn't exist", data: null, })
 		return
 	}
 	// validate the copied files/folders uris and get the details of the content to copy 
-	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedContentsUris, req.session.userId);
+	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedContentsUris, req.session.userId as string);
 
 	let folders: Folder[], files: FileData[];
 	if (contentToCopyDetails.msg === "valid uris"){
@@ -632,7 +634,7 @@ export async function copyFilesReqHandler(req: Request, res: Response) {
 	let copiedFolders: Folder[] = folders.map((folder) => {
 		return {...folder, _id: new ObjectId(), pathName: folder.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
 	})
-	const user = await dbClient.getUserWithId(req.session.userId) as User // what if the user logs in somewhere else and deletes her account b4 this hits the db
+	const user = await dbClient.getUserWithId(req.session.userId as string) as User // what if the user logs in somewhere else and deletes her account b4 this hits the db
 	const querySuccessful = await dbClient.insertCopiedResources(copiedFilesData, copiedFolders, user) // store the new copied files details in the db 
 
 	if (querySuccessful) {
@@ -651,14 +653,14 @@ export async function copyFilesReqHandler(req: Request, res: Response) {
 export async function searchFilesReqHandler(req: Request, res: Response) {
 	if (!req.query.search_query)
 		res.status(400).json({data: null, errorMsg: "Bad request!", msg: null})
-	const {msg, data, errorMsg, status} = await dbClient.searchForFile(req.query.search_query) // make it case insensitive
+	const {msg, data, errorMsg, status} = await dbClient.searchForFile(req.query.search_query as string)
 	res.status(status).json({msg, data, errorMsg})
 }
 
 /** Handles a request to download a file most likely from the user's browser
  * @param {string} req.params.fileUri - database uri of the file to download */
 export async function fileDownloadReqHandler(req: Request, res: Response) {
-	const fileDetails = await dbClient.getFileDetails(req.params.fileUri,  req.session.userId);
+	const fileDetails = await dbClient.getFileDetails(req.params.fileUri,  req.session.userId as string);
 
 	if (!fileDetails){
 		return res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
@@ -668,7 +670,7 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 		return res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
 	}
 
-	const user = await dbClient.getUserWithId(req.session.userId) as User;
+	const user = await dbClient.getUserWithId(req.session.userId as string) as User;
 	const key = scryptSync(user.password, 'notRandomSalt', 24) 
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
 	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
@@ -706,7 +708,7 @@ export async function sessionEndReqHandler(req: Request, res: Response) {
 
 /** Handles a request to delete the currently logged in user's acocunt */
 export async function deleteUserReqHandler(req: Request, res: Response) {
-	let {status, errorMsg, msg, data} = await dbClient.deleteUserData(req.session.userId);
+	let {status, errorMsg, msg, data} = await dbClient.deleteUserData(req.session.userId as string);
 	if (status === 200) {
 		req.session.destroy((err) => {
 			if (err) {
