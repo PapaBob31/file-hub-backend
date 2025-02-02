@@ -256,7 +256,7 @@ export async function authHandler(req: Request, res: Response) { // yep. turn it
 		const tokens = new Tokens()
 		res.status(200).json({data: {...user, csrfToken: tokens.create(req.session.csrfSecret as string)}, errorMsg: null, msg: null})
 	}else {
-		res.status(401).json({errorMsg: "Invalid Request! Unauthenticated User!", data: null, msg: null})
+		res.status(401).json({errorMsg: "Invalid Request! Unauthenticated User!", data: {username: null}, msg: null})
 	}
 }
 
