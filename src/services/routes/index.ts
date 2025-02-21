@@ -13,12 +13,12 @@ router.post("/signup", signupHandler)
 router.get("/auth-user-details", authHandler)
 router.post("/:folderUri/upload-file", fileUploadHandler);
 router.get("/fileDetail/:fileHash", fileReqByHashHandler) // I think the file hash would be too long in a url. Make It a post req or get the file by another id
-router.get("/:folderUri/files-data", filesRequestHandler) // Check what would happen if the request didn't contain it's parameters e.g. the request didn't contain a folderUri
+router.get("/:folderUri/files-data", filesRequestHandler)
 router.get("/files/:fileUri", singleFileReqHandler)
 router.post("/create-folder", createFolderReqHandler)
 router.get("/upload-history", userUploadHistoryReqHandler)
 router.post("/delete-file/:fileUri", fileDelReqHandler)
-router.get("/add-to-favourites/:fileUri", newFavFileReqHandler)
+router.post("/add-to-favourites/:fileUri", newFavFileReqHandler)
 router.post("/rename-file", fileRenameHandler)
 router.post("/remove-from-history/:fileUri", uploadDelFromHistoryHandler)
 router.post("/share", accessGrantReqHandler)
