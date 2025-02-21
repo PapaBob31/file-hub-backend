@@ -21,6 +21,7 @@ escape html from any form of user input that will be displayed later; usernames 
 handle bogus http requests, i.e 404 everyhing that ought to have a payload but doesn't and much more
 filepath issues such as file path max name length; max file size, path traversing exploits, e.t.c
 what happens if I set invalid response code i.e 4000 instead of 400
+what happens if a file is deleted while it's still being streamed or sent to the client
 
 ensure proper validation especially all those type assertions
 
@@ -29,6 +30,8 @@ LOGOUT
 How does exppress work internally? Should I use threads?
 --->> do everything related to time properly and deleting a file should delete it from any shared entry if any too
 send a file request and abort while the page reloads to see how express reacts
+
+How can get paramteters be dangerous if improperly parsed?
 
 BULL?
 */
@@ -92,8 +95,8 @@ function generateMetaData(request: Request):FileData {
 		userId: new ObjectId(request.session.userId),
 		sizeUploaded: 0,
 		uri: nanoid(),
-		timeUploaded: (new Date()).toISOString(),
-		lastModified: (new Date()).toISOString(),
+		timeUploaded: new Date(),
+		lastModified: new Date(),
 		parentFolderUri: request.params.folderUri,
 		inHistory: true,
 		deleted: false,
@@ -126,6 +129,7 @@ function updateFileContent(req: Request, fileData: FileData, uploadTracker: {siz
 	req.on('data', (chunk)=>{
 		writeToFile("../uploads/"+fileData.pathName, cipher.update(chunk), 'a');
 		uploadTracker.sizeUploaded += chunk.length;
+		// console.log(uploadTracker.sizeUploaded)
 	})
 }
 
@@ -133,7 +137,6 @@ function updateFileContent(req: Request, fileData: FileData, uploadTracker: {siz
 async function handleFileUploadEnd(req: Request, res: Response, lengthOfRecvdData: number, fileData: FileData, cipher: any) {
 	const lastUploadChunk = cipher.final();
 	writeToFile("../uploads/"+fileData.pathName, lastUploadChunk, 'a');
-	lengthOfRecvdData += lastUploadChunk.length
 
 	if (req.complete) {
 		const newFileSize = fileData.sizeUploaded + lengthOfRecvdData
@@ -246,8 +249,9 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
 /** Handles a request to get the details/metadata of all files in a logical folder
  * @param {string} req.params.folderUri - db uri of the folder to to get all files from */
 export async function filesRequestHandler(req: Request, res: Response) {
-	const responseData = await dbClient.getFilesData(req.session.userId as string, req.params.folderUri)
-	res.status(200).json({data: responseData.data, msg: null, errorMsg: null})
+	const dbResponse = await dbClient.getFilesData(req.session.userId as string, req.params.folderUri, req.query)
+	console.log(dbResponse);
+	res.status(dbResponse.statusCode).json({data: dbResponse.data, msg: dbResponse.msg, errorMsg: dbResponse.errorMsg})
 }
 
 export async function authHandler(req: Request, res: Response) { // yep. turn it into a middleware
@@ -285,8 +289,11 @@ async function getFileStream(fileUri: string, userId: string) {
  * @param {string} req.params.fileUri - db uri of the file whose content is to be sent */
 export async function singleFileReqHandler(req: Request, res: Response) {
 	const {fileStream, status, msg, aesDecipher} = await getFileStream(req.params.fileUri, req.session.userId as string)
-	if (!fileStream)
+	if (!fileStream){
 		res.status(status).send(msg);
+		console.log(msg)
+		return;
+	}
 
 	if (fileStream && aesDecipher)
 		fileStream.pipe(aesDecipher).pipe(res) // stream the file to the http response as it is being decrypted 
