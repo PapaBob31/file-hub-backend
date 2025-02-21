@@ -13,8 +13,8 @@ export interface FileData {
 	hash: string;
 	sizeUploaded: number;
 	uri: string;
-	timeUploaded: string;
-	lastModified: string;
+	timeUploaded: Date;
+	lastModified: Date;
 	favourite: boolean;
 	userId: string|ObjectId;
 	parentFolderUri: string|ObjectId;
@@ -187,19 +187,60 @@ class SyncedReqClient {
 		return result;
 	}
 
-	async getFilesData(userId: string, folderUri: string) { // has invalid folderUri bug
-		let data:any = null;
+	async getFilesData(userId: string, folderUri: string, getParams: any) { // has invalid folderUri bug
+
+		function getMatchAndSortStage() {
+			const matchStage = {
+				$match: {
+					userId: new ObjectId(userId), parentFolderUri: folderUri, 
+					$expr: {$eq: ["$size", "$sizeUploaded"]}, deleted: false
+				} as any
+			}
+			const sortStage = {} as any
+			const sortInt = getParams.order === "asc" ? 1 : -1
+			const ascendingSort = getParams.order === "asc";
+			getParams.start = getParams.start ? decodeURIComponent(getParams.start) : undefined
+			switch (getParams.sortKey) {
+				case "timeUploaded": {
+					getParams.start && (matchStage.$match.timeUploaded = ascendingSort ? {$gt: new Date(getParams.start)} : {$lt: new Date(getParams.start)})
+					sortStage.$sort = {timeUploaded: sortInt, _id: sortInt}
+					break;
+				}
+				case "name": {
+					getParams.start && (matchStage.$match.name = ascendingSort ? {$gt: getParams.start} : {$lt: getParams.start})
+					sortStage.$sort = {name: sortInt, _id: sortInt}
+					break;
+				}
+				case "lastModified": {
+					getParams.start && (matchStage.$match.lastModified = ascendingSort ? {$gt: new Date(getParams.start)} : {$lt: new Date(getParams.start)})
+					sortStage.$sort = {lastModified: sortInt, _id: sortInt}
+					break;
+				}
+				case "size": {
+					getParams.start && (matchStage.$match.size = ascendingSort ? {$gt: parseInt(getParams.start)} : {$lt: parseInt(getParams.start)})
+					sortStage.$sort = {size: sortInt, _id: sortInt}
+					break;
+				}
+			}
+			return [matchStage, sortStage]
+		}
+	
 		try {
+			if (!getParams.sortKey || !getParams.order) {
+				throw new Error("Invalid get parameters")
+			}
 			const fileDetails = await this.#dataBase.collection<FileData>("uploaded_files")
 			const folderDetails = await this.#dataBase.collection<Folder>("folders")
 
-			// todo: Change this to Promise.all or something and filter out the files with complete uploads first
-			const fileCursorObj = await fileDetails.find(
-				{userId: new ObjectId(userId), parentFolderUri: folderUri, $expr: {$eq: ["$size", "$sizeUploaded"]}, deleted: false});
-			const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
-			// try and limit the result somehow to manage memory
+			const parentFolder = await folderDetails.findOne({userId: new ObjectId(userId), uri: folderUri})
+			console.log("db debug:", parentFolder, folderUri);
+			if (!parentFolder) {
+				return {statusCode: 404, data: null, msg: null, errorMsg: "Something went wrong"}
+			}
+
+			let fileCursorObj = await fileDetails.aggregate([...getMatchAndSortStage(), {$limit: 20}])
+			// All files that are children of the folder with the specified uri. try and limit the result somehow to manage memory
 			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
-			const foldersData = await folderCursorObj.toArray();
 
 			const folderMetaData = await folderDetails.aggregate([
 					{$match: {uri: folderUri}},
@@ -215,13 +256,29 @@ class SyncedReqClient {
 					{$project: {"ancestors.name": 1, "ancestors.uri": 1}}
 			]).toArray()
 
-			data = {pathDetails: folderMetaData[0].ancestors, content: ([] as (FileData|Folder)[]).concat(filesData,foldersData)}
-
+			
+			if (getParams.start) { 
+				// This is a request for more files data and all folders have been sent on initial request
+				// and so we don't add folders details to the response
+				return {statusCode: 200, data: {pathDetails: folderMetaData[0].ancestors, content: filesData}}
+			}else {
+				const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
+				// All folders that are children of the folder with the specified uri.
+				const foldersData = await folderCursorObj.toArray(); 
+				return {
+					statusCode: 200, 
+					data: {
+						pathDetails: folderMetaData.length > 0 ? folderMetaData[0].ancestors : [],
+						content: ([] as (FileData|Folder)[]).concat(foldersData, filesData)
+					},
+					msg: null, errorMsg: null
+				}
+			} 
+				
 		}catch(err) {
-			data = [];
-			console.log(err);
+			return {statusCode: 500, data: null, msg: null, errorMsg: "Something went wrong"}
+			console.log(err.message);
 		}
-		return {data};
 	}
 
 	// gets a file metadata using the file hash and file name and returns the metadata
