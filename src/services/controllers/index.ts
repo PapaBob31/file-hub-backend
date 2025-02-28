@@ -311,8 +311,8 @@ function generateFolderMetaData(req: Request): Folder|null {
 		userId: new ObjectId(req.session.userId as string),
 		uri: nanoid(),
 		type: "folder",
-		timeCreated: (new Date()).toISOString(),
-		lastModified: (new Date()).toISOString(),
+		timeCreated: new Date(),
+		lastModified: new Date(),
 		isRoot: false,
 	}
 
@@ -328,12 +328,12 @@ export async function createFolderReqHandler(req: Request, res: Response) {
 	}
 	const payLoad = generateFolderMetaData(req);
 
-	if (payLoad){
+	if (payLoad){ // todo: remove userId befor sending to client
 		const result = await dbClient.createNewFolderEntry(payLoad);
 		if (!result.acknowledged) {
 			res.status(500).json({errorMsg: "Internal Server Error", msg: null, data: null})
 		}else {
-			res.status(201).json({msg: "Folder Created successfully", data: result.uri, errrorMsg: null})
+			res.status(201).json({msg: "Folder Created successfully", data: payLoad, errrorMsg: null})
 		}
 	}else res.status(400).json({errorMsg: "Bad Request!", msg: null, data: null})
 }
@@ -679,7 +679,7 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 
 	const user = await dbClient.getUserWithId(req.session.userId as string) as User;
 	const key = scryptSync(user.password, 'notRandomSalt', 24) 
-	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from([1, 5, 6, 2, 9, 11, 45, 3, 7, 89, 23, 30, 17, 49, 53, 10]))
+	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from(fileDetails.iv, 'hex'))
 	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
 
 	if (fileStream && aesDecipher) {

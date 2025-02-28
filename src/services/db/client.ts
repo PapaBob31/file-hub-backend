@@ -31,8 +31,8 @@ export interface Folder {
 	type: "folder";
 	parentFolderUri: string|ObjectId|null;
 	userId: string|ObjectId;
-	timeCreated: string;
-	lastModified: string;
+	timeCreated: Date;
+	lastModified: Date;
 }
 
 export interface User {
@@ -233,7 +233,6 @@ class SyncedReqClient {
 			const folderDetails = await this.#dataBase.collection<Folder>("folders")
 
 			const parentFolder = await folderDetails.findOne({userId: new ObjectId(userId), uri: folderUri})
-			console.log("db debug:", parentFolder, folderUri);
 			if (!parentFolder) {
 				return {statusCode: 404, data: null, msg: null, errorMsg: "Something went wrong"}
 			}
