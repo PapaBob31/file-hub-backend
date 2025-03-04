@@ -270,7 +270,7 @@ async function getFileStream(fileUri: string, userId: string) {
 	if (!fileDetails){
 		return {status: 404, msg: "File not found", fileStream: null, aesDecipher: null};
 	}
-	if (!fileDetails.type.startsWith("image/") && !fileDetails.type.startsWith("video/")) {
+	if (!fileDetails.type.startsWith("image/") && !fileDetails.type.startsWith("video/") && !fileDetails.type.startsWith("audio/")) {
 		return {status: 400, msg: "Bad Request", fileStream: null, aesDecipher: null};
 	}
 	// todo: add proper path name and try and make every type of video supported on most browsers [start from firefox not supporting mkv]
