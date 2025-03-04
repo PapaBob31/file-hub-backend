@@ -189,6 +189,13 @@ class SyncedReqClient {
 
 	async getFilesData(userId: string, folderUri: string, getParams: any) { // has invalid folderUri bug
 
+		function getFolderMatchAndSortStage() {
+			const matchStage = {$match: {userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false}}
+			const orderInt = getParams.order === "asc" ? 1 : -1
+			const sortStage = {$sort: {name: orderInt, _id: orderInt}}
+			return [matchStage, sortStage]
+		}
+
 		function getMatchAndSortStage() {
 			const matchStage = {
 				$match: {
@@ -261,7 +268,7 @@ class SyncedReqClient {
 				// and so we don't add folders details to the response
 				return {statusCode: 200, data: {pathDetails: folderMetaData[0].ancestors, content: filesData}}
 			}else {
-				const folderCursorObj = await folderDetails.find({userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false});
+				const folderCursorObj = await folderDetails.aggregate([...getFolderMatchAndSortStage()]);
 				// All folders that are children of the folder with the specified uri.
 				const foldersData = await folderCursorObj.toArray(); 
 				return {
@@ -407,8 +414,8 @@ class SyncedReqClient {
 				type: "folder",
 				uri: homeFolderUri,
 				isRoot: true,
-				timeCreated: 'not implemented yet',
-				lastModified: 'not implemented yet',
+				timeCreated: new Date(),
+				lastModified: new Date(),
 			})
 
 			if (!queryResult2.acknowledged) {
