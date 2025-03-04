@@ -255,18 +255,18 @@ class SyncedReqClient {
 						startWith: "$parentFolderUri",
 						connectToField: "uri",
 						connectFromField: "parentFolderUri",
-						depthField: "depth",
+						// depthField: "depth",
 						as: "ancestors"
 					}},
-					{$sort: {"ancestors.depth": -1}},
-					{$project: {"ancestors.name": 1, "ancestors.uri": 1}}
+					{$project: {_id: 0, sortedPath: {$sortArray: {input: "$ancestors", sortBy: {_id: 1}}}}},
+					{$project: {"sortedPath.name": 1, "sortedPath.uri": 1, "sortedPath.isRoot": 1}}
 			]).toArray()
-
+			console.log(folderMetaData[0].sortedPath);
 			
 			if (getParams.start) { 
 				// This is a request for more files data and all folders have been sent on initial request
 				// and so we don't add folders details to the response
-				return {statusCode: 200, data: {pathDetails: folderMetaData[0].ancestors, content: filesData}}
+				return {statusCode: 200, data: {pathDetails: [...folderMetaData[0].sortedPath, {name: parentFolder.name, uri: parentFolder.uri}], content: filesData}}
 			}else {
 				const folderCursorObj = await folderDetails.aggregate([...getFolderMatchAndSortStage()]);
 				// All folders that are children of the folder with the specified uri.
@@ -274,7 +274,7 @@ class SyncedReqClient {
 				return {
 					statusCode: 200, 
 					data: {
-						pathDetails: folderMetaData.length > 0 ? folderMetaData[0].ancestors : [],
+						pathDetails: folderMetaData.length > 0 ? [...folderMetaData[0].sortedPath, {name: parentFolder.name, uri: parentFolder.uri}] : [],
 						content: ([] as (FileData|Folder)[]).concat(foldersData, filesData)
 					},
 					msg: null, errorMsg: null
