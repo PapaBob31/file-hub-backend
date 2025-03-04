@@ -190,6 +190,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			return
 		}
 		const fileStream = fs.createReadStream("../uploads/"+uploadedData.pathName) // if not fileStream??
+		console.log(uploadedData)
 		const tempFileName = nanoid()+".tempfile";
 		writeToFile("../uploads/"+tempFileName, "", 'w');
 
@@ -213,7 +214,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 		// add newly uploaded content to file
 		updateFileContent(req, uploadedData, uploadTracker, aesCipher)
 	}
-	// can 'close' be emitted before the 'data' event is attached due to decrypting data when resuming file upload
+	// can 'close' be emitted before the 'data' event is attached due to decrypting data when resuming file upload??
 	req.on('close', () => handleFileUploadEnd(req, res, uploadTracker.sizeUploaded, uploadedData, aesCipher))
 }
 
@@ -250,7 +251,6 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
  * @param {string} req.params.folderUri - db uri of the folder to to get all files from */
 export async function filesRequestHandler(req: Request, res: Response) {
 	const dbResponse = await dbClient.getFilesData(req.session.userId as string, req.params.folderUri, req.query)
-	console.log(dbResponse);
 	res.status(dbResponse.statusCode).json({data: dbResponse.data, msg: dbResponse.msg, errorMsg: dbResponse.errorMsg})
 }
 
@@ -282,22 +282,23 @@ async function getFileStream(fileUri: string, userId: string) {
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from(fileDetails.iv, 'hex'))
 	// what if it doesn't return a file stream?
 	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
-	return {status: null, msg: null, fileStream, aesDecipher};
+	return {status: null, msg: null, fileStream, aesDecipher, fileDetails};
 }
 
 /** Handles a request for the content of a file
  * @param {string} req.params.fileUri - db uri of the file whose content is to be sent */
 export async function singleFileReqHandler(req: Request, res: Response) {
-	const {fileStream, status, msg, aesDecipher} = await getFileStream(req.params.fileUri, req.session.userId as string)
+	const {fileStream, status, msg, aesDecipher, fileDetails} = await getFileStream(req.params.fileUri, req.session.userId as string)
 	if (!fileStream){
 		res.status(status).send(msg);
 		console.log(msg)
 		return;
 	}
 
-	if (fileStream && aesDecipher)
+	if (fileStream && aesDecipher){
+		res.setHeader("content-type", fileDetails.type)
 		fileStream.pipe(aesDecipher).pipe(res) // stream the file to the http response as it is being decrypted 
-	else 
+	}else 
 		res.status(500).send("Something went wrong but it's not your fault")
 }
 
