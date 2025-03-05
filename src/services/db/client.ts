@@ -187,7 +187,8 @@ class SyncedReqClient {
 		return result;
 	}
 
-	async getFilesData(userId: string, folderUri: string, getParams: any) { // has invalid folderUri bug
+	async getFilesData(userId: string, folderUri: string, getParams: any) {
+		const startFile = getParams.startFileUri ? await this.getFileDetails(decodeURIComponent(getParams.startFileUri), userId) : null
 
 		function getFolderMatchAndSortStage() {
 			const matchStage = {$match: {userId: new ObjectId(userId), parentFolderUri: folderUri, isRoot: false}}
@@ -206,29 +207,47 @@ class SyncedReqClient {
 			const sortStage = {} as any
 			const sortInt = getParams.order === "asc" ? 1 : -1
 			const ascendingSort = getParams.order === "asc";
-			getParams.start = getParams.start ? decodeURIComponent(getParams.start) : undefined
+			if (startFile && getParams.start) {
+				getParams.start = decodeURIComponent(getParams.start)
+			}
+				
+			// return {statusCode: 400, data: null, msg: null, errorMsg: "Pagination Start File doesn't exist!"}
+			
 			switch (getParams.sortKey) {
 				case "timeUploaded": {
-					getParams.start && (matchStage.$match.timeUploaded = ascendingSort ? {$gt: new Date(getParams.start)} : {$lt: new Date(getParams.start)})
+					if (getParams.start) {
+						matchStage.$match.timeUploaded = ascendingSort ? {$gte: new Date(getParams.start)} : {$lte: new Date(getParams.start)}
+						matchStage.$match._id = {$ne: new ObjectId(startFile!._id)}
+					}
 					sortStage.$sort = {timeUploaded: sortInt, _id: sortInt}
 					break;
 				}
 				case "name": {
-					getParams.start && (matchStage.$match.name = ascendingSort ? {$gt: getParams.start} : {$lt: getParams.start})
+					if (getParams.start) {
+						matchStage.$match.name = ascendingSort ? {$gte: getParams.start} : {$lte: getParams.start}
+						matchStage.$match._id = {$ne: new ObjectId(startFile!._id)}
+					}
 					sortStage.$sort = {name: sortInt, _id: sortInt}
 					break;
 				}
 				case "lastModified": {
-					getParams.start && (matchStage.$match.lastModified = ascendingSort ? {$gt: new Date(getParams.start)} : {$lt: new Date(getParams.start)})
+					if (getParams.start) {
+						matchStage.$match.lastModified = ascendingSort ? {$gte: new Date(getParams.start)} : {$lte: new Date(getParams.start)}
+						matchStage.$match._id = {$ne: new ObjectId(startFile!._id)}
+					}
 					sortStage.$sort = {lastModified: sortInt, _id: sortInt}
 					break;
 				}
 				case "size": {
-					getParams.start && (matchStage.$match.size = ascendingSort ? {$gt: parseInt(getParams.start)} : {$lt: parseInt(getParams.start)})
+					if (getParams.start) {
+						matchStage.$match.size = ascendingSort ? {$gte: parseInt(getParams.start)} : {$lte: parseInt(getParams.start)}
+						matchStage.$match._id = {$ne: new ObjectId(startFile!._id)}
+					}
 					sortStage.$sort = {size: sortInt, _id: sortInt}
 					break;
 				}
 			}
+			console.log(matchStage);
 			return [matchStage, sortStage]
 		}
 	
@@ -255,13 +274,11 @@ class SyncedReqClient {
 						startWith: "$parentFolderUri",
 						connectToField: "uri",
 						connectFromField: "parentFolderUri",
-						// depthField: "depth",
 						as: "ancestors"
 					}},
 					{$project: {_id: 0, sortedPath: {$sortArray: {input: "$ancestors", sortBy: {_id: 1}}}}},
 					{$project: {"sortedPath.name": 1, "sortedPath.uri": 1, "sortedPath.isRoot": 1}}
 			]).toArray()
-			console.log(folderMetaData[0].sortedPath);
 			
 			if (getParams.start) { 
 				// This is a request for more files data and all folders have been sent on initial request
@@ -281,9 +298,12 @@ class SyncedReqClient {
 				}
 			} 
 				
-		}catch(err) {
+		}/*catch(err) {
 			return {statusCode: 500, data: null, msg: null, errorMsg: "Something went wrong"}
-			console.log(err.message);
+			console.log(err);
+		}*/
+		finally {
+			console.log(99)
 		}
 	}
 
@@ -339,7 +359,8 @@ class SyncedReqClient {
 			const userStorageUpdated = await this.updateUsedUserStorage(userId, -fileDetails.size)
 			if (!userStorageUpdated)
 				throw new Error("File doesn't exist")
-			await fsPromises.unlink(`../uploads/${fileDetails.pathName}`)
+			if (!fileDetails.inHistory)
+				await fsPromises.unlink(`../uploads/${fileDetails.pathName}`)
 			return queryResults;
 		}catch(err) {
 			console.log(err)
