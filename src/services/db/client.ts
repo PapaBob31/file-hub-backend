@@ -210,9 +210,7 @@ class SyncedReqClient {
 			if (startFile && getParams.start) {
 				getParams.start = decodeURIComponent(getParams.start)
 			}
-				
-			// return {statusCode: 400, data: null, msg: null, errorMsg: "Pagination Start File doesn't exist!"}
-			
+
 			switch (getParams.sortKey) {
 				case "timeUploaded": {
 					if (getParams.start) {
@@ -247,7 +245,6 @@ class SyncedReqClient {
 					break;
 				}
 			}
-			console.log(matchStage);
 			return [matchStage, sortStage]
 		}
 	
@@ -298,12 +295,9 @@ class SyncedReqClient {
 				}
 			} 
 				
-		}/*catch(err) {
+		}catch(err) {
 			return {statusCode: 500, data: null, msg: null, errorMsg: "Something went wrong"}
 			console.log(err);
-		}*/
-		finally {
-			console.log(99)
 		}
 	}
 
@@ -366,6 +360,57 @@ class SyncedReqClient {
 			console.log(err)
 			return {acknowledged: false, modifiedCount: 0};
 		}
+	}
+
+	/** Deletes a folder's metadata as well as all nested folders and files from the db*/
+	async deleteFolder(userId: string, folderUri: string) {
+		const folders = await this.#dataBase.collection<Folder>("folders")
+		const files = await this.#dataBase.collection<FileData>("uploaded_files")
+		try {
+			let foldersToBeDeleted = [];
+			const targetFolder = await folders.findOne({userId: new ObjectId(userId), uri: folderUri})
+			if (!targetFolder)
+				return {statusCode: 404, errorMsg: "Folder to delete doesn't exist", data: null}
+			else {
+				foldersToBeDeleted = (await folders.aggregate([
+					{$match: {uri: folderUri}},
+					{$graphLookup: {
+						from: "folders",
+						startWith: "$uri",
+						connectToField: "parentFolderUri",
+						connectFromField: "uri",
+						as: "descendants"
+					}},
+					{$project: {_id: 0, "descendants.uri": 1}}
+				]).toArray())[0].descendants as {uri: string}[]
+			}
+			console.log(foldersToBeDeleted)
+			let queryResult;
+			let foldersToDeleteUris = foldersToBeDeleted.map(folder => folder.uri)
+
+			queryResult = await folders.deleteOne({userId: new ObjectId(userId), uri: folderUri})
+			if (!queryResult.acknowledged)
+				return {statusCode: 500, errorMsg: "Something went wrong!", data: null}
+
+			queryResult = await folders.deleteMany({userId: new ObjectId(userId), uri: {$in: foldersToDeleteUris}})
+			if (!queryResult.acknowledged)
+				return {statusCode: 500, errorMsg: "Something went wrong!", data: null}
+
+			const filesToBeDeleted = await files.find({userId: new ObjectId(userId), parentFolderUri: {$in: foldersToDeleteUris}}).toArray()
+			queryResult = await files.deleteMany({userId: new ObjectId(userId), parentFolderUri: {$in: foldersToDeleteUris}})
+			if (!queryResult.acknowledged)
+				return {statusCode: 500, errorMsg: "Something went wrong!", data: null}
+
+			const filesToBeDeletedPaths = filesToBeDeleted.map(file => file.pathName)
+			for (let i=0; i<filesToBeDeletedPaths.length; i++ ){
+				await fsPromises.unlink(`../uploads/${filesToBeDeletedPaths[i]}`)
+			}
+			return {statusCode: 200, errorMsg: "Something went wrong!", data: null};
+		}catch(err) {
+			console.log(err)
+			return {statusCode: 500, errorMsg: "Something went wrong!", data: null}
+		}
+
 	}
 
 	// updates the `name` attribute of a file's metadata in the db

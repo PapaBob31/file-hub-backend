@@ -31,7 +31,7 @@ How does exppress work internally? Should I use threads?
 --->> do everything related to time properly and deleting a file should delete it from any shared entry if any too
 send a file request and abort while the page reloads to see how express reacts
 
-How can get paramteters be dangerous if improperly parsed?
+How can get parameters be dangerous if improperly parsed?
 
 BULL?
 */
@@ -190,7 +190,6 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			return
 		}
 		const fileStream = fs.createReadStream("../uploads/"+uploadedData.pathName) // if not fileStream??
-		console.log(uploadedData)
 		const tempFileName = nanoid()+".tempfile";
 		writeToFile("../uploads/"+tempFileName, "", 'w');
 
@@ -357,6 +356,11 @@ export async function fileDelReqHandler(req: Request, res: Response) {
 	}else {
 		res.status(404).json({msg: "Target resource was not found"}) // or should it be 403?
 	}
+}
+
+export async function folderDelReqHandler(req: Request, res: Response) {
+	const results = await dbClient.deleteFolder(req.session.userId as string, req.params.folderUri)
+	res.status(results.statusCode).json({msg: results, errorMsg: results.errorMsg})
 }
 
 /** Handles a request to add a file to a user's favourites */

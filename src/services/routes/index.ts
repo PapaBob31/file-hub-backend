@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler, moveFilesReqHandler, 
+	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler, moveFilesReqHandler, folderDelReqHandler,
 	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler, deleteUserReqHandler,
 	sharedFileContentReqHandler, fileDownloadReqHandler, newFavFileReqHandler, fileRenameHandler, uploadDelFromHistoryHandler, sharedFileMetaDataReqdHandler,
 	accessGrantReqHandler, UserSharedFilesDetailsReqHandler, searchFilesReqHandler, copySharedFilesReqHandler, revokeSharedAccessReqHandler, sessionEndReqHandler
@@ -18,6 +18,7 @@ router.get("/files/:fileUri", singleFileReqHandler)
 router.post("/create-folder", createFolderReqHandler)
 router.get("/upload-history", userUploadHistoryReqHandler)
 router.post("/delete-file/:fileUri", fileDelReqHandler)
+router.post("/delete-folder/:folderUri", folderDelReqHandler)
 router.post("/add-to-favourites/:fileUri", newFavFileReqHandler)
 router.post("/rename-file", fileRenameHandler)
 router.post("/remove-from-history/:fileUri", uploadDelFromHistoryHandler)
