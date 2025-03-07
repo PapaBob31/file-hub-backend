@@ -348,7 +348,6 @@ export async function userUploadHistoryReqHandler(req: Request, res: Response) {
 	}
 }
 
-// todo, revoke all shared file access
 export async function fileDelReqHandler(req: Request, res: Response) {
 	const results = await dbClient.deleteFile(req.session.userId as string, req.params.fileUri)
 	if (results.acknowledged) {
@@ -400,8 +399,7 @@ export async function accessGrantReqHandler(req: Request, res: Response) {
 	}else {
 		const queryResult = await dbClient.grantResourcesPermission(req.body, req.session.userId as string)
 		if (queryResult.status === 200)
-			res.status(queryResult.status).json({errorMsg: queryResult.msg, msg: null, data: null})
-		res.status(queryResult.status).json({msg: queryResult.msg})
+			res.status(queryResult.status).json({msg: queryResult.msg, data: null})
 	}	
 }
 
@@ -433,7 +431,7 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 
 	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId as string)
 	if (!resource) {
-		res.status(404).json({errorMsg: "File not found!", msg: null, data: null})
+		res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
 		return;
 	}
 
@@ -448,7 +446,7 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 		if (contentIsFolderChild) {
 			targetContentUri = contentIsFolderChild
 		}else {
-			res.status(404).json({errorMsg: "File not found!", msg: null, data: null});
+			res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null});
 			return
 		}
 	}
@@ -458,10 +456,9 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 		return;
 	}else if (req.query.type === "file"){
 		const {fileStream, status, msg, aesDecipher} = await getFileStream(targetContentUri, resource.grantorId as string)
-		if (!fileStream)
+		if (!fileStream){
 			res.status(status).json({errorMsg: msg, msg: null, data:  null});
-
-		if (fileStream && aesDecipher)
+		}else if (fileStream && aesDecipher)
 			fileStream.pipe(aesDecipher).pipe(res) // stream the file to the http response as it is being decrypted 
 		else 
 			res.status(500).json({errorMsg: "Something went wrong but it's not your fault", msg: null, data:  null})
@@ -472,12 +469,12 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 	}
 }
 
-/** Gets the meta data of a shared file/folder using the shared resource uri */
+/** Gets the meta data of a shared file/folder using the shared resource shareId */
 export async function sharedFileMetaDataReqdHandler(req: Request, res: Response) {
 	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId as string)
 
 	if (!resource) {
-		res.status(404).json({errorMsg: "File not found!", msg: null, data: null})
+		res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
 		return;
 	}
 
@@ -521,7 +518,7 @@ export async function moveFilesReqHandler(req: Request, res: Response) {
 	}
 
 	// validate the moved files/folders uris and get the details of the content to copy 
-	const contentToMoveDetails = await dbClient.getContentDataToCopy(req.body.movedContentsUris, req.session.userId as string);
+	const contentToMoveDetails = await dbClient.getContentToMoveData(req.body.movedContentsUris, req.session.userId as string);
 
 	let folders: Folder[], files: FileData[];
 	if (contentToMoveDetails.msg === "valid uris"){
@@ -545,12 +542,9 @@ export async function moveFilesReqHandler(req: Request, res: Response) {
 }
 
 
-function copyFilesOnDisk(files: FileData[], newlyCopiedFiles: FileData[]) {
-	for (let i=0; i<files.length; i++) {
-		fs.copyFileSync( // this would block!! Do something about it
-			`../uploads/${files[i].pathName}`, 
-			`../uploads/${newlyCopiedFiles[i].pathName}`
-		)
+function copyFilesOnDisk(oldAndNewNestedFilePaths: [string, string][]) {
+	for (let paths of oldAndNewNestedFilePaths) {
+		fs.copyFileSync(`../uploads/${paths[0]}`, `../uploads/${paths[1]}`)
 	}
 }
 
@@ -577,32 +571,44 @@ export async function copySharedFilesReqHandler(req: Request, res: Response) {
 		return
 	}
 	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedFilesUris, grantorId as string);
-	let folders: Folder[], files: FileData[];
-	if (contentToCopyDetails.msg === "valid uris"){
-		folders = contentToCopyDetails.folders as Folder[]
-		files = contentToCopyDetails.files as FileData[]
+	if (contentToCopyDetails.msg === "Home folder can't be copied") {
+		res.status(400).json({msg: null, errorMsg: "Home folder can't be copied", data: null})
+		return
 	}else if (contentToCopyDetails.msg === "invalid uris") {
 		res.status(400).json({msg: null, errorMsg: "Some of the files to be copied do not exist", data: contentToCopyDetails.invalidUris})
 		return
-	}else {
+	}else if (contentToCopyDetails.msg !== "valid uris") { // server error
 		res.status(500).json({msg: null, errorMsg: "Internal Server Error", data: null})
 		return
 	}
 
-	let copiedFilesData: FileData[] = files.map((file) => {
-		return {...file, _id: new ObjectId(), userId: new ObjectId(req.session.userId as string), 
-		pathName: file.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
-	})
-	let copiedFolders: Folder[] = folders.map((folder) => {
-		return {...folder, _id: new ObjectId(), userId: new ObjectId(req.session.userId as string), 
-		pathName: folder.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}  // u need to remove the file extension first if any
-	})
-	const user = await dbClient.getUserWithId(req.session.userId as string) as User
-	const querySuccessful = await dbClient.insertCopiedResources(copiedFilesData, copiedFolders, user)
+	let copiedContentDict = generateCopiedContentDict(contentToCopyDetails.folders!, contentToCopyDetails.files!);
+	// console.log(copiedContentDict);
+	modifyCopiedContent(copiedContentDict, req.body.srcFolderUri, req.body.targetFolderUri)
+	const allCopiedFilesData: FileData[] = [];
+	const allCopiedFoldersData: Folder[] = [];
+	const pathsToCopy: [string, string][]= []
+
+	for (let key in copiedContentDict) {
+		copiedContentDict[key].forEach(content => {
+			if (content.type === "folder") {
+				allCopiedFoldersData.push(content as Folder)
+			}else {
+				const {newPathName, ...fileDetails} = content as CopiedNestedFileData
+				pathsToCopy.push([fileDetails.pathName, newPathName as string])
+				allCopiedFilesData.push(fileDetails)
+			}
+		})
+	}
+
+	// console.log('files', allCopiedFilesData, '\nfolders', allCopiedFoldersData)
+	const user = await dbClient.getUserWithId(req.session.userId as string) as User // what if the user logs in somewhere else and deletes her account b4 this hits the db
+	const querySuccessful = await dbClient.insertCopiedResources(allCopiedFilesData, allCopiedFoldersData, user) // store the new copied files details in the db 
+
 	if (querySuccessful) {
-		if (files.length > 0) {
+		if (allCopiedFilesData.length > 0) {
 			// todo: probably put this in a try-catch block and reverse changes incase something goes wrong
-			copyFilesOnDisk(files, copiedFilesData)
+			copyFilesOnDisk(pathsToCopy) // only files are copied on disk because folders are more or less metadata
 		}
 		res.status(200).json({msg: "successful!", errorMsg: null, data: null})
 	}else {
@@ -610,11 +616,53 @@ export async function copySharedFilesReqHandler(req: Request, res: Response) {
 	}
 }
 
+function generateCopiedContentDict(folders: Folder[], files: FileData[]) {
+	const objDict:{[key:string]: (FileData|Folder)[]} = {}
+	for (let folder of folders) {
+		if (!objDict[folder.parentFolderUri as string]) {
+			objDict[folder.parentFolderUri as string] = [folder];
+		}else {
+			objDict[folder.parentFolderUri as string].push(folder)
+		}
+	}
+
+	for (let file of files) {
+		if (!objDict[file.parentFolderUri as string]) {
+			objDict[file.parentFolderUri as string] = [file];
+		}else {
+			objDict[file.parentFolderUri as string].push(file)
+		}
+	}
+	return objDict;
+}
+
+interface CopiedNestedFileData extends FileData {
+	newPathName?: string
+}
+
+function modifyCopiedContent(parentUriChildDict: {[key:string]: (CopiedNestedFileData|Folder)[]}, parentFolderUri: string, newParentFolderUri: string) {
+	// console.log(parentFolderUri, parentUriChildDict[parentFolderUri])
+	if (!parentUriChildDict[parentFolderUri]) { // folder has no content
+		return;
+	}
+	for (let content of parentUriChildDict[parentFolderUri]) {
+		const oldContentUri = content.uri
+		content._id = new ObjectId()
+		content.uri = nanoid()
+		content.parentFolderUri = newParentFolderUri
+		if (content.type === "folder") {
+			modifyCopiedContent(parentUriChildDict, oldContentUri, content.uri)
+		}else {
+			(content as CopiedNestedFileData).newPathName = content.name + nanoid() + ".UFILE"
+		}
+	}
+}
+
 /** Handles a request to copy files/folders from one logical folder in the database to another 
  * @param {string[]} req.body.copiedContentsUris - The uris of the files/folders to be copied
  * @param {string} req.body.targetFolderUri - The uri of the folder files are to be copied into */
 export async function copyFilesReqHandler(req: Request, res: Response) {
-	if (!req.body.copiedContentsUris || req.body.copiedContentsUris.length === 0) {
+	if (!req.body.copiedContentsUris || req.body.copiedContentsUris.length === 0 ) {
 		res.status(400).json({errorMsg: "No files to copy", data: null, })
 		return
 	}
@@ -626,33 +674,44 @@ export async function copyFilesReqHandler(req: Request, res: Response) {
 	// validate the copied files/folders uris and get the details of the content to copy 
 	const contentToCopyDetails = await dbClient.getContentDataToCopy(req.body.copiedContentsUris, req.session.userId as string);
 
-	let folders: Folder[], files: FileData[];
-	if (contentToCopyDetails.msg === "valid uris"){
-		folders = contentToCopyDetails.folders as Folder[]
-		files = contentToCopyDetails.files as FileData[]
+	if (contentToCopyDetails.msg === "Home folder can't be copied") {
+		res.status(400).json({msg: null, errorMsg: "Home folder can't be copied", data: null})
+		return
 	}else if (contentToCopyDetails.msg === "invalid uris") {
 		res.status(400).json({msg: null, errorMsg: "Some of the files to be copied do not exist", data: contentToCopyDetails.invalidUris})
 		return
-	}else { // server error
+	}else if (contentToCopyDetails.msg !== "valid uris"){ // server error
 		res.status(500).json({msg: null, errorMsg: "Internal Server Error", data: null})
 		return
 	}
 
-	// generate the new copied files details that will be stored in the db
-	let copiedFilesData: FileData[] = files.map((file) => {
-		return {...file, _id: new ObjectId(), pathName: file.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
-	})
-	// generate the new copied folders details that will be stored in the db
-	let copiedFolders: Folder[] = folders.map((folder) => {
-		return {...folder, _id: new ObjectId(), pathName: folder.name + nanoid() + ".UFILE", uri: nanoid(), parentFolderUri: req.body.targetFolderUri}
-	})
+	let copiedContentDict = generateCopiedContentDict(contentToCopyDetails.folders!, contentToCopyDetails.files!);
+	// console.log(copiedContentDict);
+	modifyCopiedContent(copiedContentDict, req.body.srcFolderUri, req.body.targetFolderUri)
+	const allCopiedFilesData: FileData[] = [];
+	const allCopiedFoldersData: Folder[] = [];
+	const pathsToCopy: [string, string][]= []
+
+	for (let key in copiedContentDict) {
+		copiedContentDict[key].forEach(content => {
+			if (content.type === "folder") {
+				allCopiedFoldersData.push(content as Folder)
+			}else {
+				const {newPathName, ...fileDetails} = content as CopiedNestedFileData
+				pathsToCopy.push([fileDetails.pathName, newPathName as string])
+				allCopiedFilesData.push(fileDetails)
+			}
+		})
+	}
+
+	// console.log('files', allCopiedFilesData, '\nfolders', allCopiedFoldersData)
 	const user = await dbClient.getUserWithId(req.session.userId as string) as User // what if the user logs in somewhere else and deletes her account b4 this hits the db
-	const querySuccessful = await dbClient.insertCopiedResources(copiedFilesData, copiedFolders, user) // store the new copied files details in the db 
+	const querySuccessful = await dbClient.insertCopiedResources(allCopiedFilesData, allCopiedFoldersData, user) // store the new copied files details in the db 
 
 	if (querySuccessful) {
-		if (files.length > 0) {
+		if (allCopiedFilesData.length > 0) {
 			// todo: probably put this in a try-catch block and reverse changes incase something goes wrong
-			copyFilesOnDisk(files, copiedFilesData) // only files are copied on disk because folders are more or less metadata
+			copyFilesOnDisk(pathsToCopy) // only files are copied on disk because folders are more or less metadata
 		}
 		res.status(200).json({msg: "successful!", errorMsg: null, data: null})
 	}else {

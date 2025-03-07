@@ -17,7 +17,7 @@ export interface FileData {
 	lastModified: Date;
 	favourite: boolean;
 	userId: string|ObjectId;
-	parentFolderUri: string|ObjectId;
+	parentFolderUri: string;
 	inHistory: boolean;
 	deleted: boolean;
 	iv: string;
@@ -29,7 +29,7 @@ export interface Folder {
 	name: string;
 	isRoot: boolean;
 	type: "folder";
-	parentFolderUri: string|ObjectId|null;
+	parentFolderUri: string|null;
 	userId: string|ObjectId;
 	timeCreated: Date;
 	lastModified: Date;
@@ -50,6 +50,7 @@ export interface User {
 
 export interface SharedResource {
 	_id?: string|ObjectId;
+	name: string;
 	grantorId: string|ObjectId;
 	grantee: string;
 	grantedResourceUri: string;
@@ -59,7 +60,7 @@ export interface SharedResource {
 
 interface ResourcesDetails{
 	grantees: string[];
-	resourcesData: {uri: string, type: "file"|"folder", excludedEntriesUris: string[]}[];
+	resourcesData: {name: string, uri: string, type: "file"|"folder", excludedEntriesUris: string[]}[];
 }
 
 interface UserCreationErrors {
@@ -338,6 +339,7 @@ class SyncedReqClient {
 	/** Deletes a file metadata from the db and also deletes the actual file from disk*/
 	async deleteFile(userId: string, fileUri: string)  {
 		const uploadedFiles = await this.#dataBase.collection<FileData>("uploaded_files")
+		const sharedFiles = await this.#dataBase.collection<FileData>("shared_files")
 		let queryResults;
 		try {
 			const fileDetails = await uploadedFiles.findOne({userId: new ObjectId(userId), uri: fileUri})
@@ -353,8 +355,10 @@ class SyncedReqClient {
 			const userStorageUpdated = await this.updateUsedUserStorage(userId, -fileDetails.size)
 			if (!userStorageUpdated)
 				throw new Error("File doesn't exist")
-			if (!fileDetails.inHistory)
-				await fsPromises.unlink(`../uploads/${fileDetails.pathName}`)
+			await fsPromises.unlink(`../uploads/${fileDetails.pathName}`)
+			const shared = await sharedFiles.findOne({grantedResourceUri: fileDetails.uri})
+			if (shared)
+				await this.deleteSharedFileEntry([shared._id as string], userId)
 			return queryResults;
 		}catch(err) {
 			console.log(err)
@@ -384,7 +388,6 @@ class SyncedReqClient {
 					{$project: {_id: 0, "descendants.uri": 1}}
 				]).toArray())[0].descendants as {uri: string}[]
 			}
-			console.log(foldersToBeDeleted)
 			let queryResult;
 			let foldersToDeleteUris = foldersToBeDeleted.map(folder => folder.uri)
 
@@ -584,7 +587,7 @@ class SyncedReqClient {
 						throw new Error("invalid resource type")
 					}
 					// return valid document to be stored in the `shared_files` collection
-					return {grantorId: new ObjectId(userId), grantee, grantedResourceUri: data.uri, 
+					return {grantorId: new ObjectId(userId), grantee, grantedResourceUri: data.uri, name: data.name,
 							resourceType: data.type, excludedEntriesUris: data.excludedEntriesUris}
 				}))
 			}
@@ -727,22 +730,74 @@ class SyncedReqClient {
 
 	/** Validates the uris and returns the metadata of files and folders to be copied
 	 * @param {string[]} filesToCopyUris - uris of files and folders to copy*/
-	async getContentDataToCopy(filesToCopyUris: string[], userId: string) {
+	async getContentDataToCopy(filesToCopyUris: string[], userId: string) : 
+	Promise<{msg: string, files: null|FileData[], folders: null|Folder[], invalidUris?: string[]}> {
 		const folders = await this.#dataBase.collection<Folder>("folders");
 		const files = await this.#dataBase.collection<FileData>("uploaded_files");
-
+		console.log(userId);
 		try {
-			const targetFolders = await folders.find({userId: new ObjectId(userId), uri: {$in: filesToCopyUris}}).toArray()
-			const targetFiles = await files.find({userId: new ObjectId(userId), uri: {$in: filesToCopyUris}}).toArray()
+			const targetFolders = await folders.aggregate([
+				{$match: {uri: {$in: filesToCopyUris}, userId: new ObjectId(userId)}},
+				{$graphLookup: {
+					from: "folders",
+					startWith: "$uri",
+					connectToField: "parentFolderUri",
+					connectFromField: "uri",
+					as: "descendants"
+				}},
+			]).toArray()
 
+			const foldersToCopyUris: string[] = [];
+			const foldersToCopy:Folder[] = [];
+			
+			for (let folder of targetFolders) {
+				foldersToCopyUris.push(folder.uri)
+				if (folder.isRoot)
+					return {msg: "Home folder can't be copied", files: null, folders: null}
+				folder.descendants.forEach(descendant => {
+					foldersToCopyUris.push(descendant.uri)
+					foldersToCopy.push(descendant)
+				})
+				delete folder.descendants;
+			}
+
+			const targetFiles = await files.find({userId: new ObjectId(userId), uri: {$in: filesToCopyUris}}).toArray()
 			if (targetFolders.length + targetFiles.length !== filesToCopyUris.length) { // missing files or folders to be copied
-				const invalidUris = extractInvalidUris(filesToCopyUris, ([] as (FileData|Folder)[]).concat(targetFolders,targetFiles))
+				const invalidUris = extractInvalidUris(filesToCopyUris, ([] as (FileData|Folder)[]).concat(targetFolders, targetFiles))
 				if (invalidUris.length > 0) {
 					return {msg: "invalid uris", files: null, folders: null, invalidUris}
 				}
 			}
-			return {msg: "valid uris", folders: targetFolders, files: targetFiles}
+			
+			const allNestedFiles = await files.find({userId: new ObjectId(userId), parentFolderUri: {$in: foldersToCopyUris}}).toArray()
+
+			return {msg: "valid uris", folders: [...targetFolders as Folder[], ...foldersToCopy], files: [...targetFiles, ...allNestedFiles], }
 		}catch (err) {
+			return {msg: "server error", folders: null, files: null}
+		}
+	}
+
+	/** Validates the uris and returns the metadata of files and folders to be moved/cut
+	 * @param {string[]} filesToMoveUris - uris of files and folders to move/cut*/
+	async getContentToMoveData(filesToMoveUris: string[], userId: string) : Promise<{msg: string, files: null|FileData[], folders: null|Folder[], invalidUris?: string[]}> {
+		const folders = await this.#dataBase.collection<Folder>("folders");
+		const files = await this.#dataBase.collection<FileData>("uploaded_files");
+		try {
+			const targetFolders = await folders.find({uri: {$in: filesToMoveUris}, userId: new ObjectId(userId)}).toArray()
+			const targetFiles = await files.find({uri: {$in: filesToMoveUris}, userId: new ObjectId(userId)}).toArray();
+			if (targetFolders.length + targetFiles.length !== filesToMoveUris.length) { // missing files or folders to be copied
+				const invalidUris = extractInvalidUris(filesToMoveUris, ([] as (FileData|Folder)[]).concat(targetFolders, targetFiles))
+				if (invalidUris.length > 0) {
+					return {msg: "invalid uris", files: null, folders: null, invalidUris}
+				}
+			}
+			for (let folder of targetFolders) {
+				if (folder.isRoot)
+					return {msg: "Home folder can't be copied", files: null, folders: null}
+			}
+			return {msg: "valid uris", folders: targetFolders as Folder[], files: targetFiles}
+		}catch (err) {
+			console.log(err.message)
 			return {msg: "server error", folders: null, files: null}
 		}
 	}
@@ -766,7 +821,7 @@ class SyncedReqClient {
 				const movedContentUris = movedContent.map(file => file.uri)
 				filesMoveQueryResult = await files.updateMany({uri: {$in: movedContentUris}}, {$set: {parentFolderUri: destinationFolder.uri}}, {session})
 				foldersMoveQueryResult = await folders.updateMany({uri: {$in: movedContentUris}}, {$set: {parentFolderUri: destinationFolder.uri}}, {session})
-			}, transactionOptions as any) // 'any' is blocking a type error that s=you should probably fix
+			}, transactionOptions as any) // 'any' is blocking a type error that you should probably fix
 			if ((filesMoveQueryResult!.acknowledged) && (foldersMoveQueryResult!.acknowledged)){
 				querySuccessful = true;
 			}
