@@ -1,7 +1,7 @@
 import { Router } from "express";
 import {
 	loginHandler, signupHandler, fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler, moveFilesReqHandler, folderDelReqHandler,
-	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler, deleteUserReqHandler,
+	copyFilesReqHandler, filesRequestHandler, singleFileReqHandler, authHandler, createFolderReqHandler, fileDelReqHandler, deleteUserReqHandler, sharedFileDownloadReqHandler,
 	sharedFileContentReqHandler, fileDownloadReqHandler, newFavFileReqHandler, fileRenameHandler, uploadDelFromHistoryHandler, sharedFileMetaDataReqdHandler,
 	accessGrantReqHandler, UserSharedFilesDetailsReqHandler, searchFilesReqHandler, copySharedFilesReqHandler, revokeSharedAccessReqHandler, sessionEndReqHandler
 } from "../controllers/index.js";
@@ -28,6 +28,7 @@ router.get("/shared/:shareId/:contentUri", sharedFileContentReqHandler)
 router.post("/shared/copy-files", copySharedFilesReqHandler)
 router.post("/shared/revoke-access", revokeSharedAccessReqHandler)
 router.get("/shared-files", UserSharedFilesDetailsReqHandler)
+router.get("/shared/download/:shareId/:fileUri", sharedFileDownloadReqHandler)
 router.post("/move-files", moveFilesReqHandler)
 router.post("/copy-files", copyFilesReqHandler) // payload{fileUri: targetFolderUri}
 router.get("/search", searchFilesReqHandler) // payload{fileUri: targetFolderUri}
