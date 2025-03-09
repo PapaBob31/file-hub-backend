@@ -35,6 +35,10 @@ export interface Folder {
 	lastModified: Date;
 }
 
+interface FolderWithDescendants extends Folder {
+	descendants: Folder[]
+}
+
 export interface User {
 	_id?: string|ObjectId;
 	email: string;
@@ -370,6 +374,7 @@ class SyncedReqClient {
 	async deleteFolder(userId: string, folderUri: string) {
 		const folders = await this.#dataBase.collection<Folder>("folders")
 		const files = await this.#dataBase.collection<FileData>("uploaded_files")
+		const sharedFiles = await this.#dataBase.collection<FileData>("shared_files")
 		try {
 			let foldersToBeDeleted = [];
 			const targetFolder = await folders.findOne({userId: new ObjectId(userId), uri: folderUri})
@@ -408,6 +413,9 @@ class SyncedReqClient {
 			for (let i=0; i<filesToBeDeletedPaths.length; i++ ){
 				await fsPromises.unlink(`../uploads/${filesToBeDeletedPaths[i]}`)
 			}
+			const shared = await sharedFiles.findOne({grantedResourceUri: targetFolder.uri})
+			if (shared)
+				await this.deleteSharedFileEntry([shared._id as string], userId)
 			return {statusCode: 200, errorMsg: "Something went wrong!", data: null};
 		}catch(err) {
 			console.log(err)
@@ -574,11 +582,11 @@ class SyncedReqClient {
 			const targetFiles = await files.find({userId: new ObjectId(userId), uri: {$in: targetResourceUris}}).toArray() // metadata of files to share
 			const targetFolders = await folders.find({userId: new ObjectId(userId), uri: {$in: targetResourceUris}}).toArray() // metadata of folders to share
 			if ((targetFiles.length + targetFolders.length) !== content.resourcesData.length)
-				return {status: 404, msg: "Resource to share was not found or perhaps there are duplicate files"}
+				return {status: 404, errorMsg: "Resource to share was not found or perhaps there are duplicate files", msg: null}
 
 			const usersToGetAccess = await users.find({username: {$in: content.grantees}}).toArray()
 			if (usersToGetAccess.length !== content.grantees.length) 
-				return {status: 404, msg: "Some shared Users were not found or perhaps duplicate usernames were specified"}
+				return {status: 404, errorMsg: "Some shared Users were not found or perhaps duplicate usernames were specified", msg: null}
 
 			const contentToShare:SharedResource[] = []
 			for (let grantee of content.grantees) {
@@ -593,15 +601,15 @@ class SyncedReqClient {
 			}
 			const queryResult = await sharedFiles.insertMany(contentToShare);
 			if (queryResult.acknowledged) {
-				return {status: 200, msg: "File shared Successfully!"}
+				return {status: 200, msg: "File shared Successfully!", errorMsg: null}
 			}else {
-				return {status: 500, msg: "Internal Db Server Error!"}
+				return {status: 500, errorMsg: "Internal Db Server Error!"}
 			}
 		}catch(err) {
 			console.log(err)
 			if (err.message  === "invalid resource type")
-				return {status: 400, msg: "At least one content has no valid resource type"}
-			return {status: 500, msg: "Internal Db Server Error!"}
+				return {status: 400, errorMsg: "At least one content has no valid resource type", msg: null}
+			return {status: 500, errorMsg: "Internal Db Server Error!", msg: null}
 		}
 	}
 
@@ -648,26 +656,70 @@ class SyncedReqClient {
 		}
 	}
 
-	/** Gets the id of the owner of one or more shared resources from the db and returns it
-	 * The function assumes that every file whose uri is part of `filesUris` parameter was shared by the same user
-	 * @param {string[]} filesUris - uris of the shared resources inside the `shared_files` collection
-	 * @param {string} accessingUserId - _id of user the resource was shared with */
-	async getSharedFilesGrantorId(filesUris: string[], accessingUserId: string) {
+	async getCopiedSharedFiles(shareId: string, copiedContentsUris: string[], accessingUserId: string) {
 		const sharedFiles = await this.#dataBase.collection<SharedResource>("shared_files");
 		const users = await this.#dataBase.collection<User>("users");
+		const files = await this.#dataBase.collection<FileData>("uploaded_files");
+		const folders = await this.#dataBase.collection<FileData>("folders");
 
 		try {
 			const accessingUser = await users.findOne({_id: new ObjectId(accessingUserId)}) as User
-			const entriesToCopy = await sharedFiles.find({grantee: accessingUser.username, grantedResourceUri: {$in: filesUris}}).toArray()
-			if (entriesToCopy.length !== filesUris.length) {
-				return {status: 404, payload: {errorMsg: "Some of the resources to be copied do not exist or It's duplicated", msg: null, data: null}}
-			}else {
-				// use the grantorId of the first item in the array since they should all be the same
-				return {status: 200, payload: entriesToCopy[0].grantorId}
+			console.log(accessingUser)
+			const mainSharedEntry = await sharedFiles.findOne({_id: new ObjectId(shareId), grantee: accessingUser.username})
+			if (!mainSharedEntry) {
+				return {status: 404, payload: {errorMsg: "Shared resource to be copied doesn't exist", msg: null, data: null}}
+			}else if (copiedContentsUris.includes(mainSharedEntry.grantedResourceUri) && copiedContentsUris.length !== 1) {
+				return {status: 400, payload: {errorMsg: "Content to be copied must be at the same folder level", msg: null, data: null}}
 			}
+			const originalOwner = await users.findOne({_id: new ObjectId(mainSharedEntry.grantorId)})
+			console.log("OLD OWNER", originalOwner)
+
+			let srcFolderUri = ""
+			let data:FolderWithDescendants[] = [];
+			let foldersToCopy = [];
+			let foldersToCopyUris = []
+			let filesToCopy = [];
+			if (mainSharedEntry.resourceType === "folder") {
+				data = await folders.aggregate([
+					{$match: {uri: mainSharedEntry.grantedResourceUri}},
+					{$graphLookup: {
+						from: "folders",
+						startWith: "$uri",
+						connectToField: "parentFolderUri",
+						connectFromField: "uri",
+						as: "descendants",
+					}}
+				]).toArray() as FolderWithDescendants[]
+			}
+			if (mainSharedEntry.resourceType === "file") {
+				const sharedFile = await files.findOne({userId: new ObjectId(mainSharedEntry.grantorId), uri: mainSharedEntry.grantedResourceUri})
+				if (sharedFile){
+					srcFolderUri = sharedFile.parentFolderUri
+					filesToCopy.push(sharedFile)
+				}
+			}
+			if (mainSharedEntry.resourceType === "folder") {
+				if (mainSharedEntry.grantedResourceUri === copiedContentsUris[0]){
+					const {descendants, ...folderDetails} = data[0];
+					foldersToCopy.push(folderDetails, ...descendants)
+					foldersToCopyUris.push(folderDetails.uri, ...descendants.map(descendant => descendant.uri))
+					srcFolderUri = folderDetails.parentFolderUri as string
+				}else for (let descendant of data[0].descendants) {
+					if (copiedContentsUris.includes(descendant.uri)) {
+						foldersToCopy.push(descendant);
+						foldersToCopyUris.push(descendant.uri)
+					}
+					if (!srcFolderUri)
+						srcFolderUri = descendant.parentFolderUri as string
+				}
+			}
+			const nestedFiles = await files.find({userId: new ObjectId(mainSharedEntry.grantorId), parentFolderUri: {$in: foldersToCopyUris}, deleted: false}).toArray()
+			const directlyCopiedfiles = await files.find({userId: new ObjectId(mainSharedEntry.grantorId), uri: {$in: copiedContentsUris}, deleted: false}).toArray()
+			filesToCopy = [...directlyCopiedfiles, ...nestedFiles]
+			return {status: 200, payload: {errorMsg: null, msg: null, data: {folders: foldersToCopy, files: filesToCopy, srcFolderUri, originalOwner: originalOwner as User}}}
 		}catch(err) {
-			console.log(err)
-			return {status: 500, payload: {errorMsg: "Something went wrong and we don't know why", msg: null, data: null}}
+			console.log(err.message)
+			return {status: 500, payload: {errorMsg: "Server Error!", msg: null, data: null}}
 		}
 	}
 
@@ -675,9 +727,10 @@ class SyncedReqClient {
 	 * @param {string} folderUri - uri of the folder to check if the file|folder is a descendant of
 	 * @param {string} resourceUri - uri of the file or folder */
 	async checkIfFileIsNestedInFolder(folderUri: string, resourceUri: string, type: "file"|"folder") {
-		const targetCollection = await this.#dataBase.collection(type === "file" ? "uploaded_files" : "folder")
+		const targetCollection = await this.#dataBase.collection(type === "file" ? "uploaded_files" : "folders")
 
 		try {
+			console.log(resourceUri, type)
 			const content = await targetCollection.aggregate([
 				{$match: {uri: resourceUri}},
 				{$graphLookup: {
@@ -688,7 +741,6 @@ class SyncedReqClient {
 					as: "ancestors"
 				}}
 			]).toArray()
-			
 			if (content.length > 0) {
 				for (let doc of content[0].ancestors) {
 					if (doc.uri === folderUri)
@@ -761,7 +813,7 @@ class SyncedReqClient {
 				delete folder.descendants;
 			}
 
-			const targetFiles = await files.find({userId: new ObjectId(userId), uri: {$in: filesToCopyUris}}).toArray()
+			const targetFiles = await files.find({userId: new ObjectId(userId), uri: {$in: filesToCopyUris}, deleted: false}).toArray()
 			if (targetFolders.length + targetFiles.length !== filesToCopyUris.length) { // missing files or folders to be copied
 				const invalidUris = extractInvalidUris(filesToCopyUris, ([] as (FileData|Folder)[]).concat(targetFolders, targetFiles))
 				if (invalidUris.length > 0) {
@@ -769,7 +821,7 @@ class SyncedReqClient {
 				}
 			}
 			
-			const allNestedFiles = await files.find({userId: new ObjectId(userId), parentFolderUri: {$in: foldersToCopyUris}}).toArray()
+			const allNestedFiles = await files.find({userId: new ObjectId(userId), parentFolderUri: {$in: foldersToCopyUris}, deleted: false}).toArray()
 
 			return {msg: "valid uris", folders: [...targetFolders as Folder[], ...foldersToCopy], files: [...targetFiles, ...allNestedFiles], }
 		}catch (err) {
