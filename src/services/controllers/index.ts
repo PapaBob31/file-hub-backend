@@ -426,6 +426,30 @@ export async function revokeSharedAccessReqHandler(req: Request, res: Response) 
 	}
 }
 
+async function getSharedResourceContentDetails(shareId: string, userId: string, contentUri: string, type: "folder"|"file") {
+  const resource = await dbClient.getSharedResourceDetails(shareId, userId)
+  if (!resource) {
+    return null
+  }
+
+  let targetContentUri;
+  if (contentUri === resource.grantedResourceUri) {
+    targetContentUri = resource.grantedResourceUri;
+  }else {
+    // gets a resource uri if it's a child of a shared folder cos sharing a folder is 
+    // sharing all the folder's children by default, no matter how deeply nested. .... Probably inefficient if there are a lot of files in a shared folder client side
+    const contentIsFolderChild = await dbClient.checkIfFileIsNestedInFolder(resource.grantedResourceUri, contentUri, type)
+    if (contentIsFolderChild) {
+      targetContentUri = contentIsFolderChild
+    }else {
+      return null
+    }
+  }
+
+  return {details: resource, targetContentUri}
+
+}
+
 /** Handles a request from an authenticated user for a resource's (file|folder) content that was shared with him/her
  * @param {string} req.params.shareId - unique id associated with the shared resoource
  * @param {string} req.params.fileUri - uri of the shared resoource
@@ -436,28 +460,11 @@ export async function sharedFileContentReqHandler(req: Request, res: Response) {
 		res.status(400).json({errorMsg: "no 'type' parameter was specified!", data: null})
 		return
 	}
-
-	const resource = await dbClient.getSharedResourceDetails(req.params.shareId, req.session.userId as string)
-	if (!resource) {
-		res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
-		return;
+	const sharedResource = await getSharedResourceContentDetails(req.params.shareId, req.session.userId as string, req.params.contentUri, req.query.type as "folder"|"file")
+	if (!sharedResource) {
+		return res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
 	}
-
-	let targetContentUri;
-
-	if (req.params.contentUri === resource.grantedResourceUri) {
-		targetContentUri = resource.grantedResourceUri;
-	}else {
-		// gets a resource uri if it's a child of a shared folder cos sharing a folder is 
-		// sharing all the folder's children by default, no matter how deeply nested. .... Probably inefficient if there are a lot of files in a shared folder client side
-		const contentIsFolderChild = await dbClient.checkIfFileIsNestedInFolder(resource.grantedResourceUri, req.params.contentUri, req.query.type as "folder"|"file")
-		if (contentIsFolderChild) {
-			targetContentUri = contentIsFolderChild
-		}else {
-			res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null});
-			return
-		}
-	}
+	const {details: resource, targetContentUri} = sharedResource
 	
 	if (resource.excludedEntriesUris.includes(targetContentUri)) {
 		res.status(403).json({errorMsg: "You don't have access to this resource", msg: null, data: null})
@@ -501,6 +508,37 @@ export async function sharedFileMetaDataReqdHandler(req: Request, res: Response)
 
 	}
 }
+
+export async function sharedFileDownloadReqHandler(req: Request, res: Response) {
+	const sharedResource = await getSharedResourceContentDetails(req.params.shareId, req.session.userId as string, req.params.fileUri, "file")
+	if (!sharedResource)
+		return res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
+
+	if (sharedResource.details.excludedEntriesUris.includes(sharedResource.targetContentUri))
+		return res.status(403).json({errorMsg: "You don't have access to this resource", msg: null, data: null});
+		
+	const fileDetails = await dbClient.getFileDetails(req.params.fileUri, sharedResource.details.grantorId as string);
+
+	if (!fileDetails){
+		// this should be impossible but never say never
+		console.log("Shared file requested for download suddenly disappears")
+		return res.status(500).json({errorMsg: "Something went wrong", msg: null, data: null});
+	}
+
+	const user = await dbClient.getUserWithId(sharedResource.details.grantorId as string) as User;
+	const key = scryptSync(user.password, 'notRandomSalt', 24) 
+	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from(fileDetails.iv, 'hex'))
+	const fileStream = fs.createReadStream(`../uploads/${fileDetails.pathName}`)
+
+	if (fileStream && aesDecipher) {
+		res.attachment(fileDetails.name)
+		res.set("Content-Length", fileDetails.size.toString())
+		res.type(fileDetails.type)
+		fileStream.pipe(aesDecipher).pipe(res) // the content is streamed to work around the delays of encryption
+	}else 
+		res.status(500).json({errorMsg: "Something went wrong but it's not your fault", msg: null, data:  null})
+}
+
 
 /** Handles a request for all files/folders shared by a user */
 export async function UserSharedFilesDetailsReqHandler(req: Request, res: Response) {
@@ -636,7 +674,6 @@ export async function copySharedFilesReqHandler(req: Request, res: Response) {
 }
 
 function generateCopiedContentDict(folders: Folder[], files: FileData[]) {
-	console.log("why????")
 	const objDict:{[key:string]: (FileData|Folder)[]} = {}
 	for (let folder of folders) {
 		if (!objDict[folder.parentFolderUri as string]) {
