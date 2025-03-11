@@ -952,6 +952,7 @@ class SyncedReqClient {
 		const users = this.#dataBase.collection<User>("users")
 		const files = this.#dataBase.collection<FileData>("uploaded_files");
 		const folders = this.#dataBase.collection<Folder>("folders");
+		const sharedFiles = await this.#dataBase.collection<FileData>("shared_files")
 
 		try {
 			const userFilesPaths = await files.aggregate([
@@ -960,8 +961,8 @@ class SyncedReqClient {
 									]).toArray()
 			await files.deleteMany({userId: new ObjectId(userId)})
 			await folders.deleteMany({userId: new ObjectId(userId)})
-
-			// delete all it's uploaded fies from disk
+			await sharedFiles.deleteMany({grantorId: new ObjectId(userId)})
+			// delete all it's uploaded files from disk
 			for (let fileData of userFilesPaths) {
 				await fsPromises.unlink("../uploads/"+fileData.pathName)
 			}
