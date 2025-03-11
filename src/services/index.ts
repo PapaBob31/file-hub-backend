@@ -9,7 +9,7 @@ import {htmlFileReqHandler} from "./controllers/index.js"
 const app = express()
 const portNo = 7200;
 
-// prevents the express.json middleware from parsing an uploaded json type with content-type of 'application/json'
+// prevents the express.json middleware from parsing an uploaded json file with content-type of 'application/json'
 function parseOnlyIfJsonRequest(req: Request, res: Response, next: ()=>void) {
 	if (!req.headers['x-local-name']) { // request is a file upload
 		express.json({limit: "1000kb"})(req, res, next);
