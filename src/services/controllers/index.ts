@@ -82,6 +82,10 @@ function headersAreValid(request: Request) {
 	if (!request.headers["x-file-hash"] || !request.headers["x-local-name"]) {
 		return false
 	}
+
+	if (request.headers["content-length"] === "0") {
+		return false
+	}
 	return true;
 }
 
@@ -135,6 +139,11 @@ function updateFileContent(req: Request, fileData: FileData, uploadTracker: {siz
 
 /** Performs the necessary db update and other side effects after a file's content has been updated with a new upload */
 async function handleFileUploadEnd(req: Request, res: Response, lengthOfRecvdData: number, fileData: FileData, cipher: any) {
+	if (lengthOfRecvdData === 0) {
+		await dbClient.deleteFile(fileData.userId.toString(), fileData.uri)
+		res.status(400).send(JSON.stringify({data: null, errorMsg: "Empty file upload isn't allowed", msg: null}))
+		return 
+	}
 	const lastUploadChunk = cipher.final();
 	writeToFile("../uploads/"+fileData.pathName, lastUploadChunk, 'a');
 
@@ -162,7 +171,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	const uploadTracker = {fileId: "", sizeUploaded: 0};
 
 	if (!headersAreValid(req)) {
-		res.status(400).json({msg: "Invalid headers!"})
+		res.status(400).json({errorMsg: "Invalid Request (headers)!", msg: null, data: null})
 		return;
 	}
 
