@@ -267,7 +267,7 @@ class SyncedReqClient {
 
 			let fileCursorObj = await fileDetails.aggregate([...getMatchAndSortStage(), {$limit: 20}])
 			// All files that are children of the folder with the specified uri. try and limit the result somehow to manage memory
-			const filesData = await fileCursorObj.toArray(); // should I filter out the id and hash? since their usage client side can be made optional
+			const filesData = await fileCursorObj.toArray() as FileData[]; // should I filter out the id and hash? since their usage client side can be made optional
 
 			const folderMetaData = await folderDetails.aggregate([
 					{$match: {uri: folderUri}},
@@ -289,7 +289,7 @@ class SyncedReqClient {
 			}else {
 				const folderCursorObj = await folderDetails.aggregate([...getFolderMatchAndSortStage()]);
 				// All folders that are children of the folder with the specified uri.
-				const foldersData = await folderCursorObj.toArray(); 
+				const foldersData = await folderCursorObj.toArray() as Folder[]; 
 				return {
 					statusCode: 200, 
 					data: {
@@ -788,7 +788,7 @@ class SyncedReqClient {
 		const files = await this.#dataBase.collection<FileData>("uploaded_files");
 		console.log(userId);
 		try {
-			const targetFolders = await folders.aggregate([
+			const targetFolders:any[] = await folders.aggregate([
 				{$match: {uri: {$in: filesToCopyUris}, userId: new ObjectId(userId)}},
 				{$graphLookup: {
 					from: "folders",
@@ -806,7 +806,7 @@ class SyncedReqClient {
 				foldersToCopyUris.push(folder.uri)
 				if (folder.isRoot)
 					return {msg: "Home folder can't be copied", files: null, folders: null}
-				folder.descendants.forEach(descendant => {
+				folder.descendants.forEach((descendant: Folder) => {
 					foldersToCopyUris.push(descendant.uri)
 					foldersToCopy.push(descendant)
 				})
