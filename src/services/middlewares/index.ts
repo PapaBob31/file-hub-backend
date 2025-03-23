@@ -4,15 +4,15 @@ import session from "express-session"
 import MongoStore from "connect-mongo"
 import Tokens from "csrf"
 
-
 const sessionSecretArray = JSON.parse(process.env.SESSION_SECRET as string) as string[]
 let hasHttps = true
 if (process.env.MODE === "development") {
 	hasHttps = false
 }
 
+// session managing middleware
 export const loginSession = session({
-	name: process.env.name + 'Id', // fix this bug: process.env.name is undefined
+	name: 'sessionId',
 	secret: sessionSecretArray,
 	saveUninitialized: false,
 	resave: false,
@@ -33,29 +33,27 @@ export function setCorsHeaders(req: Request, res: Response, next: ()=>any):void 
 	}else next()
 }
 
-export function logRequestDetails(req: Request, _res: Response, next: ()=>void) {
-	console.log(`${req.method} ${req.originalUrl}`)
-	next()
-}
-
+// user authentication middleware
 export async function authenticateUser(req: Request, res: Response, next: ()=>void) {
+	// these routes do not need authentication
 	const excludedEndpoints = ["/services/login", "/services/signup", "/services/auth-user-details"];
 	if (excludedEndpoints.includes(req.originalUrl)) {
 		next()
 		return;
 	}
-	if (!req.session.userId) {
-		res.status(401).json({errorMsg: "Unauthorised! Pls login", msg: null, data: null});
+	if (!req.session.userId) { // there's no currently logged in user
+		res.status(401).json({errorMsg: "Unauthenticated! Pls login", msg: null, data: null});
 		return
 	}
-	const user = await dbClient.getUserWithId(req.session.userId)
-	if (user){
+	const user = await dbClient.users.getUserWithId(req.session.userId)
+	if (user){ // there's a logged in user but somehow we can't find their data
 		next()
 	}else {
 		res.status(401).json({errorMsg: "Unauthorised! Pls login"});
 	}
 }
 
+// This middleware ensures requests have the proper csrf headers
 export async function checkForCSRF(req: Request, res: Response, next: ()=>void) {
 	const excludedEndpoints = ["/services/login", "/services/signup", "/services/auth-user-details"];
 	const tokens = new Tokens()
@@ -63,6 +61,7 @@ export async function checkForCSRF(req: Request, res: Response, next: ()=>void) 
 	if (excludedEndpoints.includes(req.originalUrl) || req.method === "GET") {
 		next()
 	}else if (!tokens.verify(req.session.csrfSecret as string, req.headers["x-file-vault-csrf-token"] as string)) {
+		// request doesn't have the proper CSRF header
 		res.status(400).json({msg: "Invalid request!"})
 		req.destroy()
 	}else {
