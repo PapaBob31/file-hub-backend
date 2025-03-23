@@ -3,6 +3,9 @@ import { scryptSync, randomBytes } from "node:crypto"
 import { nanoid } from "nanoid"
 import FoldersDAO from "./folders.js"
 import fsPromises from "fs/promises"
+import { type FileData } from "./files.js"
+import { type Folder } from "./folders.js"
+import escape from "escape-html"
 
 export interface User {
 	_id?: string|ObjectId;
@@ -42,11 +45,11 @@ export default class UsersDAO  {
 			let duplicateUsernameError = ""
 			const existingEmail = await users.findOne({email: {$regex: userData.email, $options: "i"}})
 			if (existingEmail)
-				duplicateEmailError += "Email already in use. Emails are case-sensitive"
+				duplicateEmailError += "Email already in use. Emails are case-insensitive"
 
 			const exisitingUsername = await users.findOne({username: {$regex: userData.username, $options: "i"}})
 			if (exisitingUsername)
-				duplicateUsernameError += "Username already in use. Usernames are case-sensitive"
+				duplicateUsernameError += "Username already in use. Usernames are case-insensitive"
 			if (existingEmail || exisitingUsername)
 				return {status: 400, errorMsg: {password: "", general:"", username: duplicateUsernameError, email: duplicateEmailError}, msg: null}
 
@@ -54,8 +57,8 @@ export default class UsersDAO  {
 			const uniqueSalt = randomBytes(32).toString('hex');
 			const passwordHash = scryptSync(userData.password, uniqueSalt, 64, {N: 8192, p: 10}).toString('hex')
 			const queryResult = await users.insertOne({
-				username: userData.username,
-				email: userData.email,
+				username: escape(userData.username),
+				email: escape(userData.email),
 				salt: uniqueSalt,
 				password: passwordHash, 
 				homeFolderUri,
@@ -95,7 +98,7 @@ export default class UsersDAO  {
 		const users = this.#db.collection("users")
 		let user = null
 		try {
-			user = await users.findOne<User>({email: loginData.email})
+			user = await users.findOne<User>({email: escape(loginData.email)})
 			if (!user)
 				throw new Error("User doesn't esist!")
 			if (user.password !== scryptSync(loginData.password, user.salt, 64, {N: 8192, p: 10}).toString('hex'))

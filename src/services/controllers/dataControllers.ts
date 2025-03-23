@@ -9,6 +9,8 @@ import { type User } from "../db/users.js"
 import { ObjectId } from "mongodb"
 import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from "node:crypto"
 import { nanoid } from "nanoid"
+import escape from "escape-html"
+import path from "path"
 
 import { generateCopiedContentDict, getFileStream } from "./utilities.js"
 
@@ -19,10 +21,17 @@ function generateUniqueFileName(request: Request) {
 
 // checks if the request headers for a file upload are valid according to my requirements
 function validateHeaders(request: Request) {
-	if (!request.headers["x-file-hash"])
-		return {isValid: false, errorMsg: "File hash must be present"}
+	if (!request.headers["x-file-hash"] || Array.isArray(request.headers["x-file-hash"]))
+		return {isValid: false, errorMsg: "A single File hash must be present"}
 	if (!request.headers["x-local-name"] || Array.isArray(request.headers["x-local-name"]))
 		return {isValid: false, errorMsg: "A single file name request header must be specified"}
+	if (request.headers["x-local-name"].indexOf('\0') !== -1) 
+		return {isValid: false, errorMsg: "Invalid file name"}
+
+	const relativePathName = path.join("../uploads/",request.headers["x-local-name"])
+	if (!relativePathName.startsWith("../uploads") && !relativePathName.startsWith("..\\uploads")) // path traversal detected
+		return {isValid: false, errorMsg: "Invalid file name"}
+
 	if (!request.headers["x-local-name"]!.trim() || request.headers["x-local-name"]!.length > 150)
 		return {isValid: false, errorMsg: "File names must be between 1 and 150 characters"}
 	if (request.headers["content-length"] === "0") {
@@ -104,7 +113,7 @@ export async function fileRenameHandler(req: Request, res: Response) {
 		return;
 	}
 
-	const results = await dbClient.files.renameFile(req.session.userId as string, req.body.fileUri, req.body.newName)
+	const results = await dbClient.files.renameFile(req.session.userId as string, req.body.fileUri, escape(req.body.newName))
 	if (results.modifiedCount === 0) {
 		res.status(404).json({msg: "Target resource was not found"})
 	}else {
@@ -125,7 +134,7 @@ export async function folderRenameHandler(req: Request, res: Response) {
 		return;
 	}
 
-	const results = await dbClient.folders.renameFolder(req.session.userId as string, req.body.fileUri, req.body.newName)
+	const results = await dbClient.folders.renameFolder(req.session.userId as string, req.body.fileUri, escape(req.body.newName))
 	if (results.modifiedCount === 0) {
 		res.status(404).json({msg: "Target resource was not found"})
 	}else {
@@ -162,7 +171,7 @@ function modifyCopiedContent(parentUriChildDict: {[key:string]: (CopiedNestedFil
  * an object containing relevant details about the file*/
 function generateMetaData(request: Request):FileData {
 	return  {
-		name: request.headers["x-local-name"] as string,
+		name: escape(request.headers["x-local-name"]) as string,
 		pathName: generateUniqueFileName(request),
 		type: request.headers["content-type"] as string,
 		size: parseInt(request.headers["content-length"] as string),
@@ -209,7 +218,7 @@ async function getIncomingFileMetaData(req: Request) : Promise<{errorMsg: null|s
  * @param {CipherIv} cipher - cipher object that encrypts the file part*/
 function updateFileContent(req: Request, fileData: FileData, uploadTracker: {sizeUploaded: number, fileId: string}, cipher: any) { // cipher types?
 	req.on('data', (chunk)=>{
-		writeToFile("../uploads/"+fileData.pathName, cipher.update(chunk), 'a');
+		writeToFile(path.join("../uploads/",fileData.pathName), cipher.update(chunk), 'a');
 		uploadTracker.sizeUploaded += chunk.length;
 	})
 }
@@ -227,7 +236,7 @@ async function handleFileUploadEnd(req: Request, res: Response, lengthOfRecvdDat
 		return 
 	}
 	const lastUploadChunk = cipher.final();
-	writeToFile("../uploads/"+fileData.pathName, lastUploadChunk, 'a');
+	writeToFile(path.join("../uploads/",fileData.pathName), lastUploadChunk, 'a');
 
 	if (req.complete) {
 		const newFileSize = fileData.sizeUploaded + lengthOfRecvdData
@@ -280,13 +289,13 @@ export async function fileUploadHandler(req: Request, res: Response) {
 	const aesDecipher = createDecipheriv("aes-192-cbc", key, Buffer.from(uploadedData.iv, 'hex'))
 
 	if (uploadedData.sizeUploaded !== 0) { // The file has been partially uploaded before
-		if (!fs.existsSync("../uploads/"+uploadedData.pathName)) { // this should be impossible; log that the file for the record wasn't found? delete the record?
+		if (!fs.existsSync(path.join("../uploads/",uploadedData.pathName))) { // this should be impossible; log that the file for the record wasn't found? delete the record?
 			res.status(400).json({errorMsg: "Invalid request!", msg: null, data: null});
 			return
 		}
-		const fileStream = fs.createReadStream("../uploads/"+uploadedData.pathName) // if not fileStream??
+		const fileStream = fs.createReadStream(path.join("../uploads/",uploadedData.pathName)) // if not fileStream??
 		const tempFileName = nanoid()+".tempfile";
-		writeToFile("../uploads/"+tempFileName, "", 'w');
+		writeToFile(path.join("../uploads/",tempFileName), "", 'w');
 
 		// decrypt partial upload first so that the partial upload and the new update can be encrypted as one file
 		// to avoid problems related to padding of the partial encrypted content when decrypting
@@ -294,7 +303,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 
 		aesDecipher.on("data", (chunk)=>{
 			// store file content inside another file as it's being decrypted to avoid running out of memory
-			writeToFile("../uploads/"+tempFileName, aesCipher.update(chunk), 'a');
+			writeToFile(path.join("../uploads/",tempFileName), aesCipher.update(chunk), 'a');
 		})
 
 		aesDecipher.on('end', async ()=> {
@@ -304,7 +313,7 @@ export async function fileUploadHandler(req: Request, res: Response) {
 			updateFileContent(req, uploadedData, uploadTracker, aesCipher)
 		})
 	}else {
-		writeToFile("../uploads/"+uploadedData.pathName, "", 'w'); // create empty file that the encrypted data will be stored in
+		writeToFile(path.join("../uploads/",uploadedData.pathName), "", 'w'); // create empty file that the encrypted data will be stored in
 		// add newly uploaded content to file
 		updateFileContent(req, uploadedData, uploadTracker, aesCipher)
 	}
@@ -336,7 +345,7 @@ export async function fileReqByHashHandler(req: Request, res: Response) {
 		res.status(400).json({errorMsg: "BAD REQUEST!", data: null, msg: null})
 		return;
 	}
-	// readup on accepted characters in urls
+
 	const responseData = await dbClient.files.getFileByHash(
 		req.session.userId as string, decodeURIComponent(req.params.fileHash), req.headers["x-local-name"] as string
 	)
@@ -398,7 +407,7 @@ function generateFolderMetaData(req: Request): Folder|null {
 		return null
 	}
 	return {
-		name: req.body.name,
+		name: escape(req.body.name),
 		parentFolderUri: req.body.parentFolderUri,
 		userId: new ObjectId(req.session.userId as string),
 		uri: nanoid(),

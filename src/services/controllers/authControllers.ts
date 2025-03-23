@@ -31,18 +31,24 @@ export async function loginHandler(req: Request, res: Response) {
 		req.session.userId = user._id as string
 		req.session.csrfSecret = tokens.secretSync()
 		res.status(200).json({data: {...user, csrfToken: tokens.create(req.session.csrfSecret as string)}, errorMsg: null, msg: "success"})
-		// return res.status(200).json({msg: "success", loggedInUserName: user.username})
 	}else return res.status(401).json({errorMsg: "Invalid login details", data: {username: null}, msg: null});
 }
 
 /** Handles a request to register a new User
  * @param {Object} req.body - {username: string, email: string, password: string, passwordExtraCheck: string}*/
 export async function signupHandler(req: Request, res: Response) {
-	if (!req.body.username || !req.body.email) {
-		return res.status(400).json({msg: "Invalid request body"});
+	console.log(req.body)
+	if (!req.body.username.trim() || !req.body.email.trim()) {
+		return res.status(400).json({errorMsg: {general: "Invalid request body"}, data: null, msg: null});
+	}
+	if (req.body.username.length > 100 || req.body.email > 100) {
+		return res.status(400).json({errorMsg: {general: "Invalid Request body fields. Username or Email length is longer than 100 characters"}, data: null, msg: null});
+	}
+	if ((/[?\[\]+.^<>\*&%@!~#|`'",=\-/\\{}();:]/).test(req.body.username)) {
+		return res.status(400).json({errorMsg: {username: "Invalid Username field. The only punctuation allowed in a username is the underscore"}, data: null, msg: null}); 
 	}
 	if (!req.body.password || req.body.password !== req.body.passwordExtraCheck || req.body.password.length < 10) {
-		return res.status(400).json({msg: "Invalid request body"});
+		return res.status(400).json({errorMsg: {password: "Invalid password fields"}, data: null, msg: null});
 	}
 	const {status, msg, errorMsg} = await dbClient.users.createNewUser(req.body);
 	res.status(status).json({msg, errorMsg, data: null})
