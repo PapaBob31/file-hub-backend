@@ -2,9 +2,11 @@
 // TODO: uninstall all unused packages
 import express, {Response, Request}  from "express"
 import cookieParser from "cookie-parser";
-import {setCorsHeaders, logRequestDetails, authenticateUser, loginSession, checkForCSRF } from "./middlewares/index.js";
+import {setCorsHeaders, authenticateUser, loginSession, checkForCSRF } from "./middlewares/index.js";
 import router from "./routes/index.js"
-import {htmlFileReqHandler} from "./controllers/index.js"
+import {htmlFileReqHandler} from "./controllers/dataControllers.js"
+import loggerFunc from "pino-http";
+import compression from "compression"
 
 const app = express()
 const portNo = 7200;
@@ -16,11 +18,22 @@ function parseOnlyIfJsonRequest(req: Request, res: Response, next: ()=>void) {
 	}else next()
 }
 
+
+app.use(loggerFunc.default({
+	quietResLogger: true,
+	customSuccessMessage: function(_req, res) {
+		return `${res.statusCode}`
+	},
+	customReceivedMessage: function (req, _res) {
+		return `${req.method} ${req.originalUrl}`
+	},
+	redact: {paths: ["req", "res"], remove: true}
+}))
+app.use(compression())
 app.use(loginSession)
 app.use(cookieParser())
-app.use(logRequestDetails)
 app.use(express.static("../static"))
-app.use("/services", setCorsHeaders, authenticateUser, checkForCSRF)
+app.use("/services", setCorsHeaders, authenticateUser, checkForCSRF) // is this cors middleware proper?
 app.use("/services", parseOnlyIfJsonRequest, router)
 app.all("/*", htmlFileReqHandler)
 
