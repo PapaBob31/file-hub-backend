@@ -128,7 +128,7 @@ export default class ContentDAO {
 				// and so we don't add folders details to the response
 				return {statusCode: 200, data: {pathDetails: [...folderMetaData[0].sortedPath, {name: parentFolder.name, uri: parentFolder.uri}], content: filesData}}
 			}else {
-				const folderCursorObj = await folderDetails.aggregate([...getFolderMatchAndSortStage(this)]);
+				const folderCursorObj = await folderDetails.aggregate([...getFolderMatchAndSortStage()]);
 				// All folders that are children of the folder with the specified uri.
 				const foldersData = await folderCursorObj.toArray() as Folder[]; 
 				return {
