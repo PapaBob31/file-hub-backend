@@ -5,7 +5,6 @@ import dbClient from "../db/client.js"
 import { type FileData, type CopiedNestedFileData, } from "../db/files.js"
 import { type Folder } from "../db/folders.js"
 import { type User } from "../db/users.js"
-// import escapeHtml from "escape-html"
 import { ObjectId } from "mongodb"
 import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from "node:crypto"
 import { nanoid } from "nanoid"
@@ -60,7 +59,7 @@ function copySharedFilesOnDisk(filesData: CopiedNestedFileData[], newOwner: User
 			inputFileStream.pipe(aesDecipher).pipe(aesCipher).pipe(outputFileStream)
 			outputFileStream.on('finish', fileStreamEndCb)
 		}catch(err) {
-			console.log(err.message)
+			console.error(err.message)
 			fileStreamEndCb()
 		}
 	}
@@ -214,7 +213,7 @@ export async function sharedFileDownloadReqHandler(req: Request, res: Response) 
 
 	if (!fileDetails){
 		// this should be impossible but never say never
-		console.log("Shared file requested for download suddenly disappears")
+		req.log.info("Shared file requested for download suddenly disappears")
 		return res.status(500).json({errorMsg: "Something went wrong", msg: null, data: null});
 	}
 
@@ -295,7 +294,7 @@ export async function copySharedContentReqHandler(req: Request, res: Response) {
 	function sharedFileCopyComplete() {
 		filesStillBeingProcessed.current--;
 		if (filesStillBeingProcessed.current === 0) {
-			res.status(200).json({msg: "successful!", errorMsg: null, data: null})
+			res.status(200).json({msg: "successful!", errorMsg: null, data: [...allCopiedFoldersData, ...allCopiedFilesData]})
 		}
 	}
 

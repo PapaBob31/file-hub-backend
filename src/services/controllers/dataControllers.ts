@@ -171,7 +171,7 @@ function modifyCopiedContent(parentUriChildDict: {[key:string]: (CopiedNestedFil
  * an object containing relevant details about the file*/
 function generateMetaData(request: Request):FileData {
 	return  {
-		name: escape(request.headers["x-local-name"]) as string,
+		name: escape(request.headers["x-local-name"] as string),
 		pathName: generateUniqueFileName(request),
 		type: request.headers["content-type"] as string,
 		size: parseInt(request.headers["content-length"] as string),
@@ -376,7 +376,7 @@ export async function singleFileReqHandler(req: Request, res: Response) {
 	const {fileStream, status, msg, aesDecipher, fileDetails} = await getFileStream(req.params.fileUri, req.session.userId as string)
 	if (!fileStream){
 		res.status(status).send(msg);
-		console.log(msg)
+		req.log.info(msg)
 		return;
 	}
 
@@ -475,7 +475,7 @@ export async function moveItemsReqHandler(req: Request, res: Response) {
 	const querySuccessful = await dbClient.content.updateMovedContentParent(([] as (FileData|Folder)[]).concat(folders, files), destinationFolder)
 
 	if (querySuccessful) {
-		res.status(200).json({msg: "Files moved successfully!", data: null, errorMsg: null})
+		res.status(200).json({msg: "Files moved successfully!", data: [...folders, ...files], errorMsg: null})
 	}else {
 		res.status(500).json({errorMsg: "Internal Server Error!", data: null, msg: null})
 	}
@@ -550,7 +550,7 @@ export async function copyItemsReqHandler(req: Request, res: Response) {
 			// todo: probably put this in a try-catch block and reverse changes incase something goes wrong
 			copyFilesOnDisk(pathsToCopy) // only files are copied on disk because folders are more or less metadata
 		}
-		res.status(200).json({msg: "successful!", errorMsg: null, data: null})
+		res.status(200).json({msg: "successful!", errorMsg: null, data: [...allCopiedFoldersData, ...allCopiedFilesData]})
 	}else {
 		res.status(500).json({msg: "", errorMsg: "Internal Server Error. Not your fault though", data: null})
 	}
@@ -594,4 +594,15 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 		fileStream.pipe(aesDecipher).pipe(res) // the content is streamed to work around the delays of decryption
 	}else 
 		res.status(500).json({errorMsg: "Something went wrong but it's not your fault", msg: null, data:  null})
+}
+
+export async function htmlFileReqHandler(_req: Request, res: Response) {
+	res.sendFile("index.html", {root: "../static"}, function(err) {
+		if (err) {
+			// console.log(err)
+			console.log("\nAn Error occured while trying to send index.html\n")
+		}else {
+			console.log("Sent:", "index.html")
+		}
+	})
 }
