@@ -6,7 +6,8 @@ import Tokens from "csrf"
 
 const sessionSecretArray = JSON.parse(process.env.SESSION_SECRET as string) as string[]
 let hasHttps = true
-if (process.env.MODE === "development") {
+console.log((process.env.NODE_ENV)
+if (process.env.NODE_ENV === "development") {
 	hasHttps = false
 }
 
