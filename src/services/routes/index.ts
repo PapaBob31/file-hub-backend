@@ -1,3 +1,4 @@
+/// @ts-ignore
 import { Router } from "express";
 
 import {loginHandler, signupHandler, sessionEndReqHandler, authHandler, deleteUserReqHandler} from "../controllers/authControllers.js";
@@ -29,6 +30,8 @@ no-cache
 no-store
 
 */
+
+
 
 router.post("/login", loginHandler);
 router.post("/signup", signupHandler)

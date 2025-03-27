@@ -575,11 +575,13 @@ export async function fileDownloadReqHandler(req: Request, res: Response) {
 	const fileDetails = await dbClient.files.getFileDetails(req.params.fileUri, req.session.userId as string);
 
 	if (!fileDetails){
-		return res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
+		res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
+		return;
 	}
 
 	if (!fs.existsSync(`../uploads/${fileDetails.pathName}`)) {
-		return res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
+		res.status(404).json({msg: null,  errorMsg: "File not found", data: null});
+		return;
 	}
 
 	const user = await dbClient.users.getUserWithId(req.session.userId as string) as User;

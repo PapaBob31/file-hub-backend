@@ -144,7 +144,8 @@ export async function sharedItemsContentReqHandler(req: Request, res: Response) 
 	}
 	const sharedResource = await getSharedResourceContentDetails(req.params.shareId, req.session.userId as string, req.params.contentUri, req.query.type as "folder"|"file")
 	if (!sharedResource) {
-		return res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
+		res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null});
+		return 
 	}
 	const {details: resource, targetContentUri} = sharedResource
 	
@@ -203,18 +204,23 @@ export async function sharedFileMetaDataReqdHandler(req: Request, res: Response)
  * @param {string} req.params.fileUri - uri of the file to download */
 export async function sharedFileDownloadReqHandler(req: Request, res: Response) {
 	const sharedResource = await getSharedResourceContentDetails(req.params.shareId, req.session.userId as string, req.params.fileUri, "file")
-	if (!sharedResource)
-		return res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
+	if (!sharedResource){
+		res.status(404).json({errorMsg: "Shared Resource was not found!", msg: null, data: null})
+		return;
+	}
 
-	if (sharedResource.details.excludedEntriesUris.includes(sharedResource.targetContentUri))
-		return res.status(403).json({errorMsg: "You don't have access to this resource", msg: null, data: null});
-		
+	if (sharedResource.details.excludedEntriesUris.includes(sharedResource.targetContentUri)){
+		res.status(403).json({errorMsg: "You don't have access to this resource", msg: null, data: null});
+		return;
+	}
+
 	const fileDetails = await dbClient.files.getFileDetails(req.params.fileUri, sharedResource.details.grantorId as string);
 
 	if (!fileDetails){
 		// this should be impossible but never say never
 		req.log.info("Shared file requested for download suddenly disappears")
-		return res.status(500).json({errorMsg: "Something went wrong", msg: null, data: null});
+		res.status(500).json({errorMsg: "Something went wrong", msg: null, data: null});
+		return;
 	}
 
 	const user = await dbClient.users.getUserWithId(sharedResource.details.grantorId as string) as User;
