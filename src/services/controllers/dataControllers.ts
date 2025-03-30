@@ -171,7 +171,7 @@ function modifyCopiedContent(parentUriChildDict: {[key:string]: (CopiedNestedFil
  * an object containing relevant details about the file*/
 function generateMetaData(request: Request):FileData {
 	return  {
-		name: escape(request.headers["x-local-name"] as string),
+		name: escape(decodeURIComponent(request.headers["x-local-name"] as string)),
 		pathName: generateUniqueFileName(request),
 		type: request.headers["content-type"] as string,
 		size: parseInt(request.headers["content-length"] as string),
