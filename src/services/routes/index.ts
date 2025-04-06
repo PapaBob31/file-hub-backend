@@ -1,7 +1,7 @@
 /// @ts-ignore
 import { Router } from "express";
 
-import {loginHandler, signupHandler, sessionEndReqHandler, authHandler, deleteUserReqHandler} from "../controllers/authControllers.js";
+import /*loginHandler, signupHandler,*/ { sessionEndReqHandler, authHandler, deleteUserReqHandler} from "../controllers/authControllers.js";
 
 import {
 	fileUploadHandler, fileReqByHashHandler, userUploadHistoryReqHandler, moveItemsReqHandler, folderDelReqHandler,
@@ -33,8 +33,8 @@ no-store
 
 
 
-router.post("/login", loginHandler);
-router.post("/signup", signupHandler)
+// router.post("/login", loginHandler);
+// router.post("/signup", signupHandler)
 router.get("/auth-user-details", authHandler)
 router.post("/:folderUri/upload-file", fileUploadHandler);
 router.get("/fileDetail/:fileHash", fileReqByHashHandler) // I think the file hash would be too long in a url. Make It a post req or get the file by another id

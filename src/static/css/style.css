@@ -795,6 +795,10 @@ html {
   right: 5vw;
 }
 
+.right-\[6vw\] {
+  right: 6vw;
+}
+
 .right-full {
   right: 100%;
 }
@@ -855,6 +859,10 @@ html {
   top: 70%;
 }
 
+.top-\[75vh\] {
+  top: 75vh;
+}
+
 .top-\[80\%\] {
   top: 80%;
 }
@@ -873,18 +881,6 @@ html {
 
 .top-px {
   top: 1px;
-}
-
-.top-\[70vh\] {
-  top: 70vh;
-}
-
-.top-\[75vh\] {
-  top: 75vh;
-}
-
-.right-\[6vw\] {
-  right: 6vw;
 }
 
 .z-10 {
@@ -1643,6 +1639,10 @@ html {
   background-color: rgb(22 163 74 / var(--tw-bg-opacity, 1));
 }
 
+.bg-green-600\/30 {
+  background-color: rgb(22 163 74 / 0.3);
+}
+
 .bg-green-700 {
   --tw-bg-opacity: 1;
   background-color: rgb(21 128 61 / var(--tw-bg-opacity, 1));
@@ -1722,10 +1722,6 @@ html {
 .bg-yellow-500 {
   --tw-bg-opacity: 1;
   background-color: rgb(234 179 8 / var(--tw-bg-opacity, 1));
-}
-
-.bg-green-600\/30 {
-  background-color: rgb(22 163 74 / 0.3);
 }
 
 .bg-\[url\(\'\.\.\/images\/big-bg\.jpg\'\)\] {
@@ -1819,10 +1815,6 @@ html {
 
 .fill-white {
   fill: #fff;
-}
-
-.fill-green-600 {
-  fill: #16a34a;
 }
 
 .stroke-current {
@@ -2420,11 +2412,6 @@ html {
     padding: 1rem;
   }
 
-  .sm\:py-2 {
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
-  }
-
   .sm\:pb-60 {
     padding-bottom: 15rem;
   }
@@ -2545,18 +2532,6 @@ html {
 
   .md\:w-\[60vw\] {
     width: 60vw;
-  }
-
-  .md\:flex-row {
-    flex-direction: row;
-  }
-
-  .md\:items-center {
-    align-items: center;
-  }
-
-  .md\:justify-end {
-    justify-content: flex-end;
   }
 
   .md\:rounded-bl-3xl {
